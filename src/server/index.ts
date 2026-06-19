@@ -8,6 +8,7 @@ import { ruleRoutes } from './routes/rules';
 import { healthRoutes } from './routes/health';
 import { alertRoutes } from './routes/alerts';
 import { adapterRoutes } from './routes/adapters';
+import routerRoutes from './routes/router';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './services/logger';
 import { startScheduler, getSchedulerStatus, triggerManualScan } from './services/scheduler';
@@ -15,6 +16,8 @@ import { adapterService } from './services/adapterService';
 import { TraeAdapter } from './services/adapters/traeAdapter';
 import { ClaudeCodeAdapter } from './services/adapters/claudeCodeAdapter';
 import { CursorAdapter } from './services/adapters/cursorAdapter';
+import { routerService } from './services/routerService';
+import { modelProfileService } from './services/modelProfileService';
 import * as aiCodeEventService from './services/aiCodeEventService';
 import * as alertService from './services/alertService';
 import * as ruleService from './services/ruleService';
@@ -45,6 +48,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/rules', ruleRoutes);
 app.use('/api/alerts', alertRoutes);
 app.use('/api/adapters', adapterRoutes);
+app.use('/api/router', routerRoutes);
 
 // Scheduler API
 app.get('/api/scheduler/status', (_req, res) => {
@@ -63,30 +67,34 @@ app.post('/api/scheduler/scan', async (_req, res) => {
 // Error handler
 app.use(errorHandler);
 
-// Start server
-app.listen(PORT, async () => {
-  logger.info(`知墟 Server (ZhiXu ACOP) running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-
-  // 加载持久化数据（事件、规则、告警通道配置）
+// 启动前先初始化所有服务（确保 API 可用时数据已就绪）
+async function startup() {
   await aiCodeEventService.loadFromStorage();
   await alertService.loadFromStorage();
   await ruleService.loadFromStorage();
-  logger.info(`持久化数据加载完成`);
-
-  // 启动规则调度器
+  await routerService.initialize();
+  await modelProfileService.initialize();
   startScheduler();
-  logger.info(`规则调度器已启动：每 60 秒扫描一次规则`);
-
-  // 注册并初始化适配器（采集 Trae/Claude Code/Cursor 的真实事件）
   adapterService.register(new TraeAdapter({ name: 'Trae 适配器', version: '1.2.0', enabled: true, mode: 'auto' }));
   adapterService.register(new ClaudeCodeAdapter({ name: 'Claude Code 适配器', version: '1.2.0', enabled: true, mode: 'auto' }));
   adapterService.register(new CursorAdapter({ name: 'Cursor 适配器', version: '1.2.0', enabled: true, mode: 'auto' }));
   await adapterService.initializeAll();
+}
 
-  // 启动适配器定时采集（每 15 秒读取一次适配器事件）
-  adapterService.startScheduledCollection(15000);
-  logger.info(`适配器已启动并开始定时采集（每 15 秒）`);
+// Start server
+startup().then(() => {
+  app.listen(PORT, () => {
+    logger.info(`知墟 Server (ZhiXu ACOP) running on port ${PORT}`);
+    logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`持久化数据加载完成`);
+    logger.info(`模型路由引擎已就绪`);
+    logger.info(`规则调度器已启动：每 60 秒扫描一次规则`);
+    adapterService.startScheduledCollection(15000);
+    logger.info(`适配器已启动并开始定时采集（每 15 秒）`);
+  });
+}).catch((err) => {
+  logger.error('启动失败', err);
+  process.exit(1);
 });
 
 export default app;

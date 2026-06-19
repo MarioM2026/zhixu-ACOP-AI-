@@ -3,6 +3,7 @@ import Dashboard from './pages/Dashboard';
 import Events from './pages/Events';
 import Rules from './pages/Rules';
 import Settings from './pages/Settings';
+import ModelRouting from './pages/ModelRouting';
 import Layout from './components/Layout';
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
           <Route path="events" element={<Events />} />
           <Route path="rules" element={<Rules />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="router" element={<ModelRouting />} />
         </Route>
       </Routes>
     </BrowserRouter>

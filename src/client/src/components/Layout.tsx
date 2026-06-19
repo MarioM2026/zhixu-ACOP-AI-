@@ -4,6 +4,7 @@ const navItems = [
   { path: '/dashboard', label: '监控看板', icon: '📊' },
   { path: '/events', label: '事件列表', icon: '📋' },
   { path: '/rules', label: '规则管理', icon: '⚙️' },
+  { path: '/router', label: '模型路由', icon: '🧭' },
   { path: '/settings', label: '设置', icon: '🔧' },
 ];
 
