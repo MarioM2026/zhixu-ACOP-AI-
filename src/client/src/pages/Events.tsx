@@ -78,6 +78,7 @@ function Events() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState({ tool: '', search: '' });
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null); // 展开的事件行 ID
 
   const fetchEvents = async () => {
     setLoading(true);
@@ -197,51 +198,152 @@ function Events() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '3rem' }}>
-                  <div className="loading" style={{ margin: '0 auto' }} />
-                </td>
-              </tr>
-            ) : events.length === 0 ? (
-              <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-                  暂无数据
-                </td>
-              </tr>
-            ) : (
-              events.map((event) => (
-                <tr key={event.id || event.sessionId}>
-                  <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>{formatTime(event.timestamp)}</td>
-                  <td>
-                    <span className={`badge ${getToolBadgeClass(event.tool)}`}>
-                      {event.tool}
-                    </span>
-                  </td>
-                  <td style={{ fontFamily: 'inherit', fontSize: '0.8rem' }}>
-                    {event.sessionId.substring(0, 8)}...
-                  </td>
-                  <td style={{ fontFamily: 'inherit', fontSize: '0.8rem' }}>
-                    {event.modelId}
-                  </td>
-                  <td>
-                    <div style={{ fontSize: '0.8rem' }}>
-                      <div>输入: {event.tokenConsumption.input.toLocaleString()}</div>
-                      <div>输出: {event.tokenConsumption.output.toLocaleString()}</div>
-                    </div>
-                  </td>
-                  <td>{formatDuration(event.performance.latency)}</td>
-                  <td>
-                    {event.quality?.errorType ? (
-                      <span className="badge badge-error">{event.quality.errorType}</span>
-                    ) : (
-                      <span className="badge badge-success">正常</span>
-                    )}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: '3rem' }}>
+                      <div className="loading" style={{ margin: '0 auto' }} />
+                    </td>
+                  </tr>
+                ) : events.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                      暂无数据
+                    </td>
+                  </tr>
+                ) : (
+                  events.map((event, index) => {
+                    const eventId = event.id || `event-${index}`;
+                    const isExpanded = expandedRowId === eventId;
+
+                    return (
+                      <>
+                        <tr key={eventId} style={{ cursor: 'pointer', background: isExpanded ? 'rgba(0, 200, 255, 0.05)' : undefined }}
+                            onClick={() => setExpandedRowId(isExpanded ? null : eventId)}>
+                          <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
+                            {isExpanded ? '▼' : '▶'} {formatTime(event.timestamp)}
+                          </td>
+                          <td>
+                            <span className={`badge ${getToolBadgeClass(event.tool)}`}>
+                              {event.tool}
+                            </span>
+                          </td>
+                          <td style={{ fontFamily: 'inherit', fontSize: '0.8rem' }}>
+                            {event.sessionId.substring(0, 8)}...
+                          </td>
+                          <td style={{ fontFamily: 'inherit', fontSize: '0.8rem' }}>
+                            {event.modelId}
+                          </td>
+                          <td>
+                            <div style={{ fontSize: '0.8rem' }}>
+                              <div>输入: {event.tokenConsumption.input.toLocaleString()}</div>
+                              <div>输出: {event.tokenConsumption.output.toLocaleString()}</div>
+                            </div>
+                          </td>
+                          <td>{formatDuration(event.performance.latency)}</td>
+                          <td>
+                            {event.quality?.errorType ? (
+                              <span className="badge badge-error">{event.quality.errorType}</span>
+                            ) : (
+                              <span className="badge badge-success">正常</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr key={`${eventId}-detail`}>
+                            <td colSpan={7} style={{ padding: '1rem', background: 'rgba(0, 0, 0, 0.3)', borderTop: '1px solid rgba(0, 200, 255, 0.3)' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', fontSize: '0.85rem' }}>
+                                {/* 基本信息 */}
+                                <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)' }}>
+                                  <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>📋 基本信息</h4>
+                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>事件 ID：</span>{event.id || 'N/A'}</div>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>会话 ID：</span>{event.sessionId}</div>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>链路 ID：</span>{(event as any).traceId || 'N/A'}</div>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>工具类型：</span>{event.tool}</div>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>模型：</span>{event.modelId}</div>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>时间：</span>{formatTime(event.timestamp)}</div>
+                                  </div>
+                                </div>
+
+                                {/* Token 消耗 */}
+                                <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)' }}>
+                                  <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>🔢 Token 消耗</h4>
+                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>输入：</span>{event.tokenConsumption.input.toLocaleString()}</div>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>输出：</span>{event.tokenConsumption.output.toLocaleString()}</div>
+                                    <div style={{ fontWeight: 'bold', color: 'var(--accent-color)', marginTop: '0.5rem' }}>总计：{event.tokenConsumption.total.toLocaleString()}</div>
+                                  </div>
+                                </div>
+
+                                {/* 性能指标 */}
+                                <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)' }}>
+                                  <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>⚡ 性能指标</h4>
+                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                    <div><span style={{ color: 'var(--text-secondary)' }}>延迟：</span>{formatDuration(event.performance.latency)}</div>
+                                    {event.performance.ttft !== undefined && (
+                                      <div><span style={{ color: 'var(--text-secondary)' }}>首 Token 时间：</span>{formatDuration(event.performance.ttft)}</div>
+                                    )}
+                                    {(event.performance as any).totalDuration !== undefined && (
+                                      <div><span style={{ color: 'var(--text-secondary)' }}>总耗时：</span>{formatDuration((event.performance as any).totalDuration)}</div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* 质量指标 */}
+                                <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)' }}>
+                                  <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                                    {event.quality?.errorType ? '❌' : '✅'} 质量指标
+                                  </h4>
+                                  <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                    {event.quality?.errorType ? (
+                                      <>
+                                        <div><span style={{ color: 'var(--text-secondary)' }}>错误类型：</span><span className="badge badge-error">{event.quality.errorType}</span></div>
+                                        <div><span style={{ color: 'var(--text-secondary)' }}>错误信息：</span>{event.quality.errorMessage || 'N/A'}</div>
+                                      </>
+                                    ) : (
+                                      <div style={{ color: 'var(--success-color)' }}>✨ 运行正常，无错误</div>
+                                    )}
+                                    {event.quality?.codeAcceptance !== undefined && (
+                                      <div><span style={{ color: 'var(--text-secondary)' }}>代码接受：</span>{event.quality.codeAcceptance ? '✅ 是' : '❌ 否'}</div>
+                                    )}
+                                    {(event.quality as any)?.contextOverflow !== undefined && (
+                                      <div><span style={{ color: 'var(--text-secondary)' }}>上下文溢出：</span>{(event.quality as any).contextOverflow ? '⚠️ 是' : '否'}</div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* 成本与元数据 */}
+                                {(event as any).cost && (
+                                  <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)' }}>
+                                    <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>💰 成本归因</h4>
+                                    <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                      <div><span style={{ color: 'var(--text-secondary)' }}>金额：</span>{(event as any).cost.amount} {(event as any).cost.currency}</div>
+                                      {(event as any).cost.attribution && (
+                                        <div><span style={{ color: 'var(--text-secondary)' }}>归属：</span>{(event as any).cost.attribution}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {(event as any).metadata && Object.keys((event as any).metadata).length > 0 && (
+                                  <div style={{ border: '1px solid var(--border-color)', borderRadius: '6px', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)' }}>
+                                    <h4 style={{ margin: '0 0 0.75rem 0', color: 'var(--accent-color)', fontSize: '0.9rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>📝 元数据</h4>
+                                    <div style={{ display: 'grid', gap: '0.5rem', wordBreak: 'break-all' }}>
+                                      {Object.entries((event as any).metadata).map(([key, value]) => (
+                                        <div key={key}><span style={{ color: 'var(--text-secondary)' }}>{key}：</span>{String(value)}</div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })
+                )}
+              </tbody>
         </table>
       </FullscreenTable>
 

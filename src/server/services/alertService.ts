@@ -42,6 +42,29 @@ export interface TestResult {
   details?: string;
 }
 
+// 告警通道配置存储（内存中保存用户配置，后续可持久化到数据库）
+const channelConfigs: Map<string, { config: DingtalkConfig | EmailConfig | WebhookConfig; enabled: boolean }> = new Map();
+
+// 设置通道配置
+export function setChannelConfig(channel: string, config: DingtalkConfig | EmailConfig | WebhookConfig, enabled: boolean = true) {
+  channelConfigs.set(channel, { config, enabled });
+  logger.info(`Channel config updated`, { channel, enabled });
+}
+
+// 获取通道配置
+export function getChannelConfig(channel: string) {
+  return channelConfigs.get(channel);
+}
+
+// 列出所有已启用的通道
+export function getEnabledChannels(): string[] {
+  const enabled: string[] = [];
+  channelConfigs.forEach((val, key) => {
+    if (val.enabled) enabled.push(key);
+  });
+  return enabled;
+}
+
 const testAlert: Alert = {
   id: 'test-' + Date.now(),
   ruleId: 'test-rule',
@@ -51,6 +74,206 @@ const testAlert: Alert = {
   timestamp: Date.now(),
   acknowledged: false,
 };
+
+/**
+ * 发送真实告警（用于规则引擎自动触发）
+ * @param alert 告警信息
+ * @param channels 目标通道数组（如 ['dingtalk', 'email', 'webhook']）
+ */
+export async function sendAlert(alert: Alert, channels: string[]): Promise<{ results: { channel: string; success: boolean; message: string }[] }> {
+  const results: { channel: string; success: boolean; message: string }[] = [];
+
+  for (const channel of channels) {
+    const channelInfo = channelConfigs.get(channel);
+    if (!channelInfo || !channelInfo.enabled) {
+      results.push({ channel, success: false, message: '通道未配置或未启用' });
+      continue;
+    }
+
+    try {
+      let result: TestResult = { success: false, message: '未实现' };
+
+      switch (channel) {
+        case 'dingtalk':
+          result = await sendDingtalk(alert, channelInfo.config as DingtalkConfig);
+          break;
+        case 'email':
+          result = await sendEmail(alert, channelInfo.config as EmailConfig);
+          break;
+        case 'webhook':
+          result = await sendWebhook(alert, channelInfo.config as WebhookConfig);
+          break;
+        default:
+          result = { success: false, message: `未知的告警通道: ${channel}` };
+      }
+
+      results.push({ channel, ...result });
+      logger.info(`Alert sent via ${channel}`, { alertId: alert.id, success: result.success });
+    } catch (error) {
+      logger.error(`Failed to send alert via ${channel}`, { alertId: alert.id, error: String(error) });
+      results.push({ channel, success: false, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  return { results };
+}
+
+// 钉钉发送（从 testDingtalk 分离出的通用函数）
+async function sendDingtalk(alert: Alert, config: DingtalkConfig): Promise<TestResult> {
+  if (!config?.webhookUrl) {
+    return { success: false, message: '钉钉 Webhook 地址未配置' };
+  }
+
+  try {
+    const severityEmoji = { info: 'ℹ️', warning: '⚠️', error: '❌', critical: '🚨' };
+    let url = config.webhookUrl;
+
+    if (config.secret) {
+      const timestamp = Date.now();
+      const stringToSign = `${timestamp}\n${config.secret}`;
+      const encoder = new TextEncoder();
+      const data = encoder.encode(stringToSign);
+      const cryptoKey = await crypto.subtle.importKey('raw', encoder.encode(config.secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+      const signature = await crypto.subtle.sign('HMAC', cryptoKey, data);
+      const sigArray = Array.from(new Uint8Array(signature));
+      const sigBase64 = btoa(unescape(encodeURIComponent(String.fromCharCode(...sigArray))));
+      const sign = encodeURIComponent(sigBase64);
+      url = `${config.webhookUrl}&timestamp=${timestamp}&sign=${sign}`;
+    }
+
+    const message = {
+      msgtype: 'markdown',
+      markdown: {
+        title: `${severityEmoji[alert.severity]} 知墟告警: ${alert.title}`,
+        text: `### ${alert.title}\n\n**严重程度**: ${alert.severity}\n\n**描述**: ${alert.message}\n\n**时间**: ${new Date(alert.timestamp).toLocaleString('zh-CN')}\n\n**规则ID**: ${alert.ruleId}\n\n---\n> 知墟 (ZhiXu) 告警系统`,
+      },
+      at: { atMobiles: config.atMobiles || [], isAtAll: config.isAtAll || false },
+    };
+
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message) });
+    const data = await response.json();
+
+    if (data.errcode === 0) {
+      return { success: true, message: '钉钉告警发送成功' };
+    } else {
+      return { success: false, message: '钉钉告警发送失败', details: data.errmsg || '未知错误' };
+    }
+  } catch (error) {
+    logger.error('Dingtalk send failed', { error: String(error) });
+    return { success: false, message: '钉钉告警发送失败', details: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// 邮件发送（从 testEmail 分离）
+async function sendEmail(alert: Alert, config: EmailConfig): Promise<TestResult> {
+  if (!config?.smtpServer || !config?.toEmails || !config.username || !config.password) {
+    return { success: false, message: '邮箱配置不完整' };
+  }
+
+  try {
+    const emailBody = `知墟 (ZhiXu ACOP) 告警通知\n============================\n\n标题: ${alert.title}\n严重程度: ${alert.severity}\n描述: ${alert.message}\n时间: ${new Date(alert.timestamp).toLocaleString('zh-CN')}\n规则ID: ${alert.ruleId}\n\n---\n请登录知墟控制台查看详情。`;
+
+    const dataBlock = `From: ${config.username}\r\nTo: ${config.toEmails}\r\nSubject: =?UTF-8?B?${Buffer.from(`[${alert.severity.toUpperCase()}] 知墟 Alert: ${alert.title}`).toString('base64')}?=\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n${emailBody}\r\n.\r\n`;
+
+    const port = config.smtpPort || 587;
+    const useSSL = port === 465;
+
+    let tls: any, net: any;
+    try { tls = await import('node:tls'); net = await import('node:net'); } catch {
+      return { success: false, message: '运行环境不支持邮件发送' };
+    }
+
+    return await new Promise<TestResult>((resolve) => {
+      const timeoutId = setTimeout(() => resolve({ success: false, message: 'SMTP 连接超时' }), 15000);
+      let responseBuffer = '';
+      let step = 0;
+      let mainSocket: any = null;
+
+      const finish = (success: boolean, message: string, details?: string) => {
+        clearTimeout(timeoutId);
+        try { mainSocket?.destroy(); } catch {}
+        resolve({ success, message, details });
+      };
+
+      const handleServerResponse = (socket: any, data: any) => {
+        const text = data.toString();
+        responseBuffer += text;
+        const lines = text.split('\r\n').filter((l: string) => l.length > 0);
+
+        for (const line of lines) {
+          if (!/^\d{3}/.test(line) && line.length > 0) continue;
+          const code = line.substring(0, 3);
+          const isLast = line.charAt(3) !== '-';
+          if (!isLast) continue;
+
+          if (code === '220') {
+            if (step === 0) { step = 1; socket.write('EHLO zhixu\r\n'); }
+            else if (step === 2) {
+              step = 3;
+              const tlsSocket = tls.connect({ socket: socket, servername: config.smtpServer, rejectUnauthorized: false }, () => { step = 4; tlsSocket.write('EHLO zhixu\r\n'); });
+              tlsSocket.on('data', (d: any) => handleServerResponse(tlsSocket, d));
+              tlsSocket.on('error', (err: any) => finish(false, 'TLS 升级失败', err.message));
+              mainSocket = tlsSocket;
+            }
+          } else if (code === '250') {
+            if (step === 1) {
+              if (useSSL) { const authStr = Buffer.from(`${config.username}\u0000${config.username}\u0000${config.password}`).toString('base64'); step = 5; socket.write(`AUTH PLAIN ${authStr}\r\n`); }
+              else { step = 2; socket.write('STARTTLS\r\n'); }
+            } else if (step === 4) {
+              const authStr = Buffer.from(`${config.username}\u0000${config.username}\u0000${config.password}`).toString('base64');
+              step = 5; socket.write(`AUTH PLAIN ${authStr}\r\n`);
+            } else if (step === 5) { step = 6; socket.write(`MAIL FROM:<${config.username}>\r\n`); }
+            else if (step === 6) { step = 7; const recipients = config.toEmails.split(',').map((e: string) => e.trim()); socket.write(`RCPT TO:<${recipients[0]}>\r\n`); }
+            else if (step === 7) { step = 8; socket.write('DATA\r\n'); }
+            else if (step === 8) { step = 9; socket.write(dataBlock); }
+            else if (step === 9) { finish(true, '邮件告警发送成功'); return; }
+          } else if (code === '235') { step = 5; if (useSSL) { step = 6; socket.write(`MAIL FROM:<${config.username}>\r\n`); } }
+          else if (code === '334') { const authStr = Buffer.from(`${config.username}\u0000${config.username}\u0000${config.password}`).toString('base64'); step = 5; socket.write(`${authStr}\r\n`); }
+          else if (code === '354') { step = 9; socket.write(dataBlock); }
+          else if (code.startsWith('5') || code.startsWith('4')) { finish(false, '邮件告警发送失败', responseBuffer.slice(-300)); return; }
+        }
+      };
+
+      try {
+        if (useSSL) {
+          mainSocket = tls.connect({ host: config.smtpServer, port, servername: config.smtpServer, rejectUnauthorized: false }, () => { step = 1; mainSocket.write('EHLO zhixu\r\n'); });
+        } else {
+          mainSocket = net.connect({ host: config.smtpServer, port });
+        }
+        mainSocket.on('data', (d: any) => handleServerResponse(mainSocket, d));
+        mainSocket.on('error', (err: any) => finish(false, '无法连接到 SMTP 服务器', err.message));
+      } catch (err: any) {
+        finish(false, '发送邮件时发生错误', err.message);
+      }
+    });
+  } catch (error) {
+    return { success: false, message: '发送邮件失败', details: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// Webhook 发送（从 testWebhook 分离）
+async function sendWebhook(alert: Alert, config: WebhookConfig): Promise<TestResult> {
+  if (!config?.url) return { success: false, message: 'Webhook 地址未配置' };
+  try {
+    const payload = { alert, source: 'zhixu', timestamp: Date.now() };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(config.headers || {}) };
+    if (config.secret) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(JSON.stringify(payload));
+      const cryptoKey = await crypto.subtle.importKey('raw', encoder.encode(config.secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+      const signature = await crypto.subtle.sign('HMAC', cryptoKey, data);
+      const sigArray = Array.from(new Uint8Array(signature));
+      const sigHex = sigArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+      headers['X-Signature'] = `sha256=${sigHex}`;
+    }
+    const response = await fetch(config.url, { method: 'POST', headers, body: JSON.stringify(payload) });
+    const responseText = await response.text();
+    if (response.ok) return { success: true, message: 'Webhook 发送成功', details: `HTTP ${response.status}` };
+    return { success: false, message: 'Webhook 发送失败', details: `HTTP ${response.status}: ${responseText.slice(0, 200)}` };
+  } catch (error) {
+    return { success: false, message: 'Webhook 发送失败', details: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 export async function sendTestAlert(
   channel: string,

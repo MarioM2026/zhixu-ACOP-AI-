@@ -94,9 +94,17 @@ router.delete('/:id', async (req, res, next) => {
 // 手动触发规则
 router.post('/:id/trigger', async (req, res, next) => {
   try {
-    await triggerRule(req.params.id);
+    const result = await triggerRule(req.params.id);
+    if (result.error) {
+      res.status(400).json({ success: false, message: result.error });
+      return;
+    }
     res.json({
       success: true,
+      data: {
+        triggered: result.triggered,
+        alert: result.alert,
+      },
     });
   } catch (error) {
     next(error);
