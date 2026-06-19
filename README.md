@@ -293,8 +293,8 @@ zhixu-acop/
 
 ```bash
 # 第一步：克隆项目
-git clone https://github.com/your-username/zhixu-acop.git
-cd zhixu-acop
+git clone https://github.com/MarioM2026/zhixu-ACOP-AI.git
+cd zhixu-ACOP-AI
 
 # 第二步：安装依赖
 npm install
@@ -616,8 +616,8 @@ MIT License — 详见 [LICENSE](LICENSE) 文件。
 
 ## 📮 联系与反馈
 
-- **项目地址** : https://github.com/your-username/zhixu-acop
-- **问题反馈** : https://github.com/your-username/zhixu-acop/issues
+- **项目地址** : https://github.com/MarioM2026/zhixu-ACOP-AI
+- **问题反馈** : https://github.com/MarioM2026/zhixu-ACOP-AI/issues
 - **功能建议** : 欢迎通过 GitHub Issue 提交你的想法
 
 > 如果这个项目对你有帮助，欢迎点个 **⭐ Star**，这是对我们最大的鼓励！

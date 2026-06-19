@@ -96,9 +96,9 @@
 
 ## 联系方式
 
-- 项目仓库：https://github.com/your-org/zhixu-acop
-- 问题反馈：https://github.com/your-org/zhixu-acop/issues
-- 文档地址：https://github.com/your-org/zhixu-acop/wiki
+- 项目仓库：https://github.com/MarioM2026/zhixu-ACOP-AI
+- 问题反馈：https://github.com/MarioM2026/zhixu-ACOP-AI/issues
+- 文档地址：https://github.com/MarioM2026/zhixu-ACOP-AI/wiki
 
 ---
 
