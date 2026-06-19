@@ -175,7 +175,7 @@ async function sendEmail(alert: Alert, config: EmailConfig): Promise<TestResult>
 
     const dataBlock = `From: ${config.username}\r\nTo: ${config.toEmails}\r\nSubject: =?UTF-8?B?${Buffer.from(`[${alert.severity.toUpperCase()}] 知墟 Alert: ${alert.title}`).toString('base64')}?=\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n${emailBody}\r\n.\r\n`;
 
-    const port = config.smtpPort || 587;
+    const port = config.smtpPort || 465;
     const useSSL = port === 465;
 
     let tls: any, net: any;
@@ -404,7 +404,7 @@ async function testEmail(config: EmailConfig): Promise<TestResult> {
       `\r\n` +
       `${emailBody}\r\n.\r\n`;
 
-    const port = config.smtpPort || 587;
+    const port = config.smtpPort || 465;
     const useSSL = port === 465;
 
     let tls: any;

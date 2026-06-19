@@ -5,11 +5,70 @@ import { logger } from './logger';
 // 内存存储（开发环境使用，生产环境应使用数据库）
 const events: Map<string, AICodeEvent> = new Map();
 
+// 生成初始测试数据（服务启动时自动注入，确保UI有内容可展示）
+// 注意：字段结构必须与前端 AICodeEvent 接口完全一致
+(function seedTestData() {
+  const now = Date.now();
+  const sessionId = 'seed-session-' + Math.floor(Math.random() * 1000);
+  const tools: Array<'trae' | 'claude_code' | 'cursor' | 'github_copilot'> = ['trae', 'claude_code', 'cursor', 'github_copilot'];
+  const models = ['claude-sonnet-4', 'gpt-4-turbo', 'deepseek-v3'];
+
+  const sampleEvents: AICodeEvent[] = Array.from({ length: 15 }, (_, i) => {
+    const hasError = Math.random() < 0.2;
+    const tool = tools[Math.floor(Math.random() * tools.length)];
+    const inputTokens = Math.floor(Math.random() * 3000) + 500;
+    const outputTokens = Math.floor(Math.random() * 2000) + 300;
+    const eventId = 'seed-event-' + i + '-' + Math.floor(Math.random() * 1000000);
+    return {
+      id: eventId,
+      traceId: 'trace-seed-' + i + '-' + Math.floor(Math.random() * 10000),
+      sessionId,
+      tool,
+      modelId: models[Math.floor(Math.random() * models.length)],
+      action: ['completion', 'edit', 'explain', 'refactor'][Math.floor(Math.random() * 4)],
+      timestamp: now - (15 - i) * 60 * 1000 * Math.floor(Math.random() * 5 + 1),
+      tokenConsumption: {
+        input: inputTokens,
+        output: outputTokens,
+        total: inputTokens + outputTokens,
+      },
+      performance: {
+        latency: Math.floor(Math.random() * 8000) + 500,
+        ttft: Math.floor(Math.random() * 3000) + 200,
+      },
+      quality: hasError
+        ? {
+            errorType: ['timeout', 'invalid_response', 'context_overflow'][Math.floor(Math.random() * 3)],
+            errorMessage: '请求超时或响应格式异常',
+            codeAcceptance: false,
+          }
+        : {
+            codeAcceptance: true,
+          },
+      context: {
+        fileType: ['.ts', '.tsx', '.js', '.py', '.md'][Math.floor(Math.random() * 5)],
+        projectSize: Math.floor(Math.random() * 500) + 50,
+      },
+      metadata: {
+        version: '1.0.0',
+        environment: 'development',
+      },
+    };
+  });
+
+  sampleEvents.forEach((event) => {
+    events.set(event.id, event);
+  });
+
+  logger.info(`已注入 ${sampleEvents.length} 条测试事件数据`);
+})();
+
 // 记录 AI 代码事件
 export async function recordAICodeEvent(event: AICodeEvent): Promise<AICodeEvent> {
-  const id = uuidv4();
+  const id = event.id || uuidv4();
   const newEvent: AICodeEvent = {
     ...event,
+    id,
     traceId: event.traceId || uuidv4(),
     timestamp: event.timestamp || Date.now(),
   };

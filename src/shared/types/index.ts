@@ -9,6 +9,7 @@ export type ToolType = 'trae' | 'claude_code' | 'cursor' | 'github_copilot' | 'c
 // AI 代码事件
 export interface AICodeEvent {
   // 基础信息
+  id?: string;                 // 事件 ID (服务端生成)
   sessionId: string;           // 会话 ID
   traceId: string;             // 链路 ID
   timestamp: number;           // 时间戳 (Unix ms)

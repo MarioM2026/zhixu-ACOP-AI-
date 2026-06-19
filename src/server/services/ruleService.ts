@@ -117,8 +117,8 @@ export async function deleteRule(id: string): Promise<void> {
   logger.info(`Rule deleted: ${id}`);
 }
 
-// 执行动作
-async function executeAction(rule: Rule, metricData: MetricData): Promise<void> {
+// 执行动作，返回创建的告警
+async function executeAction(rule: Rule, metricData: MetricData): Promise<Alert> {
   const alert: Alert = {
     id: uuidv4(),
     ruleId: rule.id,
@@ -164,6 +164,8 @@ async function executeAction(rule: Rule, metricData: MetricData): Promise<void> 
       logger.warn(`No alert channels configured, alert stored only in memory`, { alertId: alert.id });
     }
   }
+
+  return alert;
 }
 
 // 触发规则（支持评估并执行）
@@ -183,11 +185,67 @@ export async function triggerRule(id: string): Promise<{ triggered: boolean; ale
 
   // 检查条件是否满足
   if (evaluateCondition(rule, metricData)) {
-    await executeAction(rule, metricData);
-    return { triggered: true, alert: alerts.get(alert.id) };
+    const generatedAlert = await executeAction(rule, metricData);
+    return { triggered: true, alert: generatedAlert };
   }
 
   return { triggered: false };
+}
+
+// 评估事件数据
+function evaluateEvents(events: any[]): MetricData {
+  const now = Date.now();
+  const oneHourMs = 60 * 60 * 1000;
+
+  // 计算最近一小时的数据
+  const recentEvents = events.filter((e) => now - e.timestamp < oneHourMs);
+
+  const totalTokens = recentEvents.reduce((sum, e) => sum + (e.tokenConsumption?.total || 0), 0);
+  const errorCount = recentEvents.filter((e) => e.quality?.errorType).length;
+  const totalLatency = recentEvents.reduce((sum, e) => sum + (e.performance?.latency || 0), 0);
+
+  return {
+    sessionId: 'current',
+    timestamp: now,
+    tool: 'trae',
+    metrics: {
+      tokenUsage: totalTokens,
+      tokenLimit: 200000,
+      errorRate: recentEvents.length > 0 ? (errorCount / recentEvents.length) * 100 : 0,
+      avgLatency: recentEvents.length > 0 ? totalLatency / recentEvents.length : 0,
+      requestCount: recentEvents.length,
+    },
+  };
+}
+
+// 评估条件
+function evaluateCondition(rule: Rule, data: MetricData): boolean {
+  const { condition } = rule;
+  const value =
+    condition.type === 'token_threshold'
+      ? condition.threshold <= 1 // 如果阈值 <= 1，按百分比计算
+        ? data.metrics.tokenUsage / data.metrics.tokenLimit
+        : data.metrics.tokenUsage
+      : condition.type === 'error_rate'
+        ? data.metrics.errorRate
+        : condition.type === 'latency_threshold'
+          ? data.metrics.avgLatency
+          : 0;
+
+  switch (condition.operator) {
+    case '>':
+      return value > condition.threshold;
+    case '<':
+      return value < condition.threshold;
+    case '>=':
+      return value >= condition.threshold;
+    case '<=':
+      return value <= condition.threshold;
+    case '==':
+      return value === condition.threshold;
+    default:
+      return false;
+  }
 }
 
 // 获取告警列表

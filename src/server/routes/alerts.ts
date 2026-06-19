@@ -1,8 +1,29 @@
 import express from 'express';
 import { sendTestAlert, setChannelConfig, getChannelConfig, getEnabledChannels } from '../services/alertService';
+import { getAlerts, acknowledgeAlert } from '../services/ruleService';
 import { logger } from '../services/logger';
 
 const router = express.Router();
+
+// 获取告警列表
+router.get('/', async (_req, res, next) => {
+  try {
+    const alerts = await getAlerts();
+    res.json({ success: true, data: alerts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 确认告警
+router.post('/:id/ack', async (req, res, next) => {
+  try {
+    await acknowledgeAlert(req.params.id);
+    res.json({ success: true, message: '告警已确认' });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // 测试发送告警
 router.post('/test', async (req, res, next) => {
