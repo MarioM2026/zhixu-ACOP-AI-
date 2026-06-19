@@ -42,6 +42,33 @@ interface UIConfig {
   theme: 'dark' | 'light';
 }
 
+// 把主题应用到 DOM（CSS 变量通过 data-theme 切换）
+function applyTheme(theme: 'dark' | 'light') {
+  if (typeof document === 'undefined') return;
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
+// 把单个告警通道配置同步到后端（这样 sendAlert 才能读到它）
+async function saveChannelConfigToServer(
+  channel: 'dingtalk' | 'email' | 'webhook',
+  config: any,
+  enabled: boolean,
+): Promise<boolean> {
+  try {
+    const response = await fetch('/api/alerts/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel, config, enabled }),
+    });
+    if (!response.ok) return false;
+    const data = await response.json().catch(() => ({}));
+    return data.success === true || data.success === undefined; // 兼容不同响应
+  } catch (error) {
+    console.error(`[Settings] 同步 ${channel} 配置到后端失败`, error);
+    return false;
+  }
+}
+
 function Settings() {
   const { toasts, showToast, removeToast } = useToast();
   const toast = createToastApi(showToast);
@@ -94,9 +121,82 @@ function Settings() {
   const [sendingDingtalk, setSendingDingtalk] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [sendingWebhook, setSendingWebhook] = useState(false);
-  const [activeTab, setActiveTab] = useState<'otel' | 'alert' | 'ui'>('alert');
+  const [activeTab, setActiveTab] = useState<'otel' | 'alert' | 'ui' | 'adapters'>('alert');
+  const [adapters, setAdapters] = useState<Array<{
+    toolType: string; name: string; version: string; enabled: boolean;
+    mode: string; logPath: string | null; detectedPath: string | null;
+    lastCollectTime: number; totalCollected: number; lastError?: string;
+    health: { status: 'healthy' | 'degraded' | 'unhealthy'; error?: string };
+    metrics: { totalEvents: number; totalTokens: number; avgLatency: number; errorCount: number };
+  }>>([]);
+  const [adapterLoading, setAdapterLoading] = useState(false);
+  const [collecting, setCollecting] = useState(false);
+  const [lastCollectResult, setLastCollectResult] = useState<number | null>(null);
 
-  // 加载配置
+  async function loadAdapters() {
+    setAdapterLoading(true);
+    try {
+      const response = await api.get('/api/adapters');
+      if (response && response.success) {
+        setAdapters(response.data || []);
+      }
+    } catch (error) {
+      console.error('[Settings] 加载适配器状态失败', error);
+      toast.error('加载适配器状态失败');
+    } finally {
+      setAdapterLoading(false);
+    }
+  }
+
+  async function triggerCollect() {
+    setCollecting(true);
+    try {
+      const response = await api.post('/api/adapters/collect', {});
+      if (response && response.success) {
+        const total = response.data?.total || 0;
+        setLastCollectResult(total);
+        toast.success(`采集完成，共 ${total} 条新事件`);
+        loadAdapters();
+      } else {
+        toast.error('采集失败');
+      }
+    } catch (error) {
+      console.error('[Settings] 触发采集失败', error);
+      toast.error('采集失败');
+    } finally {
+      setCollecting(false);
+    }
+  }
+
+  async function submitTestEvent(toolType: string) {
+    try {
+      const response = await api.post(`/api/adapters/${toolType}/event`, {
+        sessionId: `test-${Date.now()}`,
+        modelId: toolType === 'claude_code' ? 'claude-sonnet-4' : toolType === 'cursor' ? 'gpt-4o' : 'qwen-plus',
+        tokenConsumption: {
+          input: Math.floor(Math.random() * 800) + 200,
+          output: Math.floor(Math.random() * 1500) + 500,
+        },
+        performance: { latency: Math.floor(Math.random() * 3000) + 500, ttft: Math.floor(Math.random() * 800) + 100 },
+      });
+      if (response && response.success) {
+        toast.success(`${toolType} 测试事件已提交`);
+        loadAdapters();
+      }
+    } catch (error) {
+      console.error('[Settings] 提交测试事件失败', error);
+      toast.error('提交测试事件失败');
+    }
+  }
+
+  // 进入适配器页时自动加载一次
+  useEffect(() => {
+    if (activeTab === 'adapters' && adapters.length === 0) {
+      loadAdapters();
+    }
+  }, [activeTab]);
+
+  // 加载配置（启动时从 localStorage 读取并应用到 DOM / 后端）
   useEffect(() => {
     const savedOtel = localStorage.getItem('zhixu-otel-config');
     const savedAlert = localStorage.getItem('zhixu-alert-config');
@@ -104,8 +204,36 @@ function Settings() {
 
     if (savedOtel) setOtelConfig(JSON.parse(savedOtel));
     if (savedAlert) setAlertConfig(JSON.parse(savedAlert));
-    if (savedUI) setUiConfig(JSON.parse(savedUI));
+    if (savedUI) {
+      const parsed = JSON.parse(savedUI);
+      setUiConfig(parsed);
+      applyTheme(parsed.theme || 'dark');
+    } else {
+      applyTheme('dark');
+    }
+
+    // 把已保存的告警通道配置同步到后端（否则 sendAlert 读不到）
+    if (savedAlert) {
+      try {
+        const parsed = JSON.parse(savedAlert);
+        if (parsed.channels) {
+          (['dingtalk', 'email', 'webhook'] as const).forEach((ch) => {
+            const c = parsed.channels[ch];
+            if (c && (c.enabled || c.webhookUrl || c.smtpServer || c.url)) {
+              saveChannelConfigToServer(ch, c, !!c.enabled);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('[Settings] 恢复告警通道配置到后端失败', error);
+      }
+    }
   }, []);
+
+  // 主题变更时立即应用到 DOM
+  useEffect(() => {
+    applyTheme(uiConfig.theme);
+  }, [uiConfig.theme]);
 
   const handleSave = async () => {
     setLoading(true);
@@ -124,9 +252,19 @@ function Settings() {
     }
   };
 
-  const saveEmailConfig = () => {
+  const saveEmailConfig = async () => {
     localStorage.setItem('zhixu-alert-config', JSON.stringify(alertConfig));
-    toast.success('邮箱配置已保存');
+    // 同步到后端：sendAlert 从后端的 Map 读配置
+    const ok = await saveChannelConfigToServer(
+      'email',
+      alertConfig.channels.email,
+      !!alertConfig.channels.email.enabled,
+    );
+    if (ok) {
+      toast.success('邮箱配置已保存并同步到告警服务');
+    } else {
+      toast.warning('本地已保存，但同步到告警服务失败，请检查后端服务');
+    }
   };
 
   const clearEmailConfig = () => {
@@ -158,12 +296,23 @@ function Settings() {
         },
       },
     }));
+    // 通知后端禁用此通道
+    saveChannelConfigToServer('email', { enabled: false, smtpServer: '', smtpPort: 587, username: '', password: '', toEmails: '' }, false);
     toast.info('邮箱配置已清空');
   };
 
-  const saveDingtalkConfig = () => {
+  const saveDingtalkConfig = async () => {
     localStorage.setItem('zhixu-alert-config', JSON.stringify(alertConfig));
-    toast.success('钉钉配置已保存');
+    const ok = await saveChannelConfigToServer(
+      'dingtalk',
+      alertConfig.channels.dingtalk,
+      !!alertConfig.channels.dingtalk.enabled,
+    );
+    if (ok) {
+      toast.success('钉钉配置已保存并同步到告警服务');
+    } else {
+      toast.warning('本地已保存，但同步到告警服务失败，请检查后端服务');
+    }
   };
 
   const clearDingtalkConfig = () => {
@@ -189,12 +338,22 @@ function Settings() {
         },
       },
     }));
+    saveChannelConfigToServer('dingtalk', { enabled: false, webhookUrl: '', secret: '' }, false);
     toast.info('钉钉配置已清空');
   };
 
-  const saveWebhookConfig = () => {
+  const saveWebhookConfig = async () => {
     localStorage.setItem('zhixu-alert-config', JSON.stringify(alertConfig));
-    toast.success('Webhook配置已保存');
+    const ok = await saveChannelConfigToServer(
+      'webhook',
+      alertConfig.channels.webhook,
+      !!alertConfig.channels.webhook.enabled,
+    );
+    if (ok) {
+      toast.success('Webhook 配置已保存并同步到告警服务');
+    } else {
+      toast.warning('本地已保存，但同步到告警服务失败，请检查后端服务');
+    }
   };
 
   const clearWebhookConfig = () => {
@@ -222,6 +381,7 @@ function Settings() {
         },
       },
     }));
+    saveChannelConfigToServer('webhook', { enabled: false, url: '', secret: '', headers: {} }, false);
     toast.info('Webhook配置已清空');
   };
 
@@ -350,6 +510,12 @@ function Settings() {
           onClick={() => setActiveTab('ui')}
         >
           🖥️ 界面配置
+        </button>
+        <button
+          className={`settings-tab ${activeTab === 'adapters' ? 'active' : ''}`}
+          onClick={() => setActiveTab('adapters')}
+        >
+          🔌 适配器管理
         </button>
       </div>
 
@@ -716,7 +882,19 @@ function Settings() {
               <label>界面主题</label>
               <select
                 value={uiConfig.theme}
-                onChange={(e) => setUiConfig(prev => ({ ...prev, theme: e.target.value as 'dark' | 'light' }))}
+                onChange={(e) => {
+                  const newTheme = e.target.value as 'dark' | 'light';
+                  // 1. 更新 state → 触发 applyTheme 的 useEffect，立即应用到 DOM
+                  setUiConfig(prev => ({ ...prev, theme: newTheme }));
+                  // 2. 立即写入 localStorage，避免导航后恢复到旧值
+                  try {
+                    const existing = localStorage.getItem('zhixu-ui-config');
+                    const merged = existing ? JSON.parse(existing) : { refreshInterval: 30 };
+                    localStorage.setItem('zhixu-ui-config', JSON.stringify({ ...merged, theme: newTheme }));
+                  } catch (error) {
+                    console.error('[Settings] 主题持久化失败', error);
+                  }
+                }}
               >
                 <option value="dark">深色主题（科技风）</option>
                 <option value="light">浅色主题</option>
@@ -750,6 +928,107 @@ function Settings() {
           </div>
         </div>
       )}
+      {activeTab === 'adapters' && (
+        <div className="settings-content">
+          <div className="card">
+            <h3 style={{ marginBottom: '1rem' }}>🔌 适配器状态</h3>
+            <p className="form-hint" style={{ marginBottom: '1.5rem' }}>
+              自动模式会扫描你本地的 AI 编程工具日志目录，采集真实事件数据；手动模式需要通过 API 主动提交。
+            </p>
+
+            <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-primary" onClick={loadAdapters} disabled={adapterLoading}>
+                {adapterLoading ? '🔄 刷新中...' : '🔄 刷新状态'}
+              </button>
+              <button className="btn btn-secondary" onClick={triggerCollect} disabled={collecting}>
+                {collecting ? '采集中...' : '▶️ 立即采集'}
+              </button>
+              {lastCollectResult !== null && (
+                <span className="form-hint" style={{ alignSelf: 'center' }}>
+                  本次采集 {lastCollectResult} 条事件
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {adapters.map((a) => (
+                <div key={a.toolType} className="alert-channel-card" style={{ padding: '1rem' }}>
+                  <div className="alert-channel-header">
+                    <div>
+                      <h4 style={{ margin: 0, marginBottom: '0.25rem' }}>
+                        {a.toolType === 'trae' ? '🔷 ' : a.toolType === 'claude_code' ? '🟣 ' : '🟢 '}
+                        {a.name}
+                        <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>v{a.version}</span>
+                      </h4>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                        总采集: {a.totalCollected} 条 | token: {(a.metrics.totalTokens / 1000).toFixed(1)}k | 平均延迟: {Math.round(a.metrics.avgLatency)}ms
+                      </div>
+                    </div>
+                    <span className={`badge ${a.enabled ? 'badge-active' : 'badge-inactive'}`}>
+                      {a.enabled ? `● ${a.mode}` : '○ 已禁用'}
+                    </span>
+                  </div>
+
+                  <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
+                    <div><span style={{ color: 'var(--text-secondary)' }}>健康状态：</span>
+                      <span style={{ color: a.health.status === 'healthy' ? 'var(--success-color)' : a.health.status === 'degraded' ? '#f39c12' : 'var(--danger-color)' }}>
+                        {a.health.status === 'healthy' ? '✅ 正常' : a.health.status === 'degraded' ? '⚠️ 降级' : '❌ 异常'}
+                      </span>
+                    </div>
+                    <div><span style={{ color: 'var(--text-secondary)' }}>扫描目录：</span>
+                      <code style={{ fontSize: '0.8rem' }}>{a.detectedPath || '未找到'}</code>
+                    </div>
+                    {a.lastError && (
+                      <div style={{ gridColumn: 'span 2', color: 'var(--warning-color)' }}>
+                        错误: {a.lastError}
+                      </div>
+                    )}
+                    {a.health.error && !a.lastError && (
+                      <div style={{ gridColumn: 'span 2', color: 'var(--warning-color)' }}>
+                        {a.health.error}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={a.enabled}
+                        onChange={async (e) => {
+                          await api.post(`/api/adapters/${a.toolType}/config`, { enabled: e.target.checked });
+                          loadAdapters();
+                        }}
+                      />
+                      启用
+                    </label>
+                    <select
+                      value={a.mode}
+                      onChange={async (e) => {
+                        await api.post(`/api/adapters/${a.toolType}/config`, { mode: e.target.value as 'manual' | 'auto' });
+                        loadAdapters();
+                      }}
+                      style={{ padding: '0.4rem', borderRadius: '4px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', color: 'var(--text-color)' }}
+                    >
+                      <option value="auto">自动模式（扫描日志）</option>
+                      <option value="manual">手动模式（API 提交）</option>
+                    </select>
+                    <button className="btn btn-secondary" style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }} onClick={() => submitTestEvent(a.toolType)}>
+                      ➕ 插入测试事件
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {adapters.length === 0 && !adapterLoading && (
+                <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>
+                  无适配器信息，请点击「刷新状态」
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );

@@ -1,5 +1,5 @@
 import express from 'express';
-import { sendTestAlert, setChannelConfig, getChannelConfig, getEnabledChannels } from '../services/alertService';
+import { sendTestAlert, setChannelConfig, getChannelConfig, getEnabledChannels, clearChannelConfig } from '../services/alertService';
 import { getAlerts, acknowledgeAlert } from '../services/ruleService';
 import { logger } from '../services/logger';
 
@@ -87,6 +87,18 @@ router.get('/channels', (_req, res) => {
     success: true,
     channels: getEnabledChannels().map((ch) => ({ channel: ch, enabled: !!getChannelConfig(ch)?.enabled })),
   });
+});
+
+// 获取单个通道配置
+router.get('/config/:channel', (req, res) => {
+  const cfg = getChannelConfig(req.params.channel);
+  res.json({ success: true, data: cfg ? { ...cfg, config: cfg.config } : null });
+});
+
+// 删除通道配置
+router.delete('/config/:channel', (req, res) => {
+  clearChannelConfig(req.params.channel);
+  res.json({ success: true, message: '配置已清除' });
 });
 
 export { router as alertRoutes };

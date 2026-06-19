@@ -1,19 +1,19 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { AICodeEvent, ApiResponse } from '@zhixu/shared/types';
 import { logger } from './logger';
+import { loadJSON, schedulePersist } from './storageService';
 
-// 内存存储（开发环境使用，生产环境应使用数据库）
+const STORAGE_KEY = 'ai-code-events';
+
 const events: Map<string, AICodeEvent> = new Map();
 
-// 生成初始测试数据（服务启动时自动注入，确保UI有内容可展示）
-// 注意：字段结构必须与前端 AICodeEvent 接口完全一致
-(function seedTestData() {
+function getSampleEvents(): AICodeEvent[] {
   const now = Date.now();
   const sessionId = 'seed-session-' + Math.floor(Math.random() * 1000);
   const tools: Array<'trae' | 'claude_code' | 'cursor' | 'github_copilot'> = ['trae', 'claude_code', 'cursor', 'github_copilot'];
   const models = ['claude-sonnet-4', 'gpt-4-turbo', 'deepseek-v3'];
 
-  const sampleEvents: AICodeEvent[] = Array.from({ length: 15 }, (_, i) => {
+  return Array.from({ length: 15 }, (_, i) => {
     const hasError = Math.random() < 0.2;
     const tool = tools[Math.floor(Math.random() * tools.length)];
     const inputTokens = Math.floor(Math.random() * 3000) + 500;
@@ -25,7 +25,6 @@ const events: Map<string, AICodeEvent> = new Map();
       sessionId,
       tool,
       modelId: models[Math.floor(Math.random() * models.length)],
-      action: ['completion', 'edit', 'explain', 'refactor'][Math.floor(Math.random() * 4)],
       timestamp: now - (15 - i) * 60 * 1000 * Math.floor(Math.random() * 5 + 1),
       tokenConsumption: {
         input: inputTokens,
@@ -45,23 +44,30 @@ const events: Map<string, AICodeEvent> = new Map();
         : {
             codeAcceptance: true,
           },
-      context: {
-        fileType: ['.ts', '.tsx', '.js', '.py', '.md'][Math.floor(Math.random() * 5)],
-        projectSize: Math.floor(Math.random() * 500) + 50,
-      },
       metadata: {
         version: '1.0.0',
         environment: 'development',
       },
     };
   });
+}
 
-  sampleEvents.forEach((event) => {
-    events.set(event.id, event);
-  });
+export async function loadFromStorage(): Promise<void> {
+  const saved = await loadJSON<AICodeEvent[]>(STORAGE_KEY, []);
+  if (saved.length > 0) {
+    saved.forEach((event) => events.set(event.id || uuidv4(), event));
+    logger.info(`[Events] 从持久化加载 ${saved.length} 条事件`);
+  } else {
+    const sample = getSampleEvents();
+    sample.forEach((event) => events.set(event.id || uuidv4(), event));
+    logger.info(`[Events] 首次启动，注入 ${sample.length} 条示例事件`);
+    schedulePersist(STORAGE_KEY, () => Array.from(events.values()));
+  }
+}
 
-  logger.info(`已注入 ${sampleEvents.length} 条测试事件数据`);
-})();
+function persist(): void {
+  schedulePersist(STORAGE_KEY, () => Array.from(events.values()));
+}
 
 // 记录 AI 代码事件
 export async function recordAICodeEvent(event: AICodeEvent): Promise<AICodeEvent> {
@@ -75,6 +81,7 @@ export async function recordAICodeEvent(event: AICodeEvent): Promise<AICodeEvent
 
   events.set(id, newEvent);
   logger.info(`Recorded AI code event: ${id}`, { tool: event.tool, sessionId: event.sessionId });
+  persist();
 
   return newEvent;
 }

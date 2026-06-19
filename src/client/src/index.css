@@ -18,6 +18,27 @@
   --glow-warning: rgba(255, 107, 53, 0.3);
 }
 
+/* 浅色主题（赛博朋克·日间模式） */
+:root[data-theme='light'] {
+  --primary-color: #0077aa;
+  --primary-dark: #004466;
+  --secondary-color: #00aa66;
+  --success-color: #00aa66;
+  --warning-color: #ff6b35;
+  --error-color: #cc2244;
+  --bg-primary: #f5f7fa;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-panel: #eef3f7;
+  --text-primary: #1a2a3a;
+  --text-secondary: #4a5a6a;
+  --text-muted: #8a9aaa;
+  --border-color: #c0d0dc;
+  --glow-primary: rgba(0, 119, 170, 0.25);
+  --glow-secondary: rgba(0, 170, 102, 0.25);
+  --glow-warning: rgba(255, 107, 53, 0.25);
+}
+
 * {
   margin: 0;
   padding: 0;
