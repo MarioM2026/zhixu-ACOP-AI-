@@ -134,6 +134,13 @@ function Settings() {
   const [collecting, setCollecting] = useState(false);
   const [lastCollectResult, setLastCollectResult] = useState<number | null>(null);
   const [manualPathMap, setManualPathMap] = useState<Record<string, string>>({});
+  const [validatingPath, setValidatingPath] = useState<Record<string, boolean>>({});
+  const [pathValidation, setPathValidation] = useState<Record<string, {
+    ok: boolean; message: string;
+    logFiles?: number; totalSizeBytes?: number;
+    traeRelatedLogs?: number; previewEvents?: number;
+    previewModels?: string[]; previewTokens?: number;
+  }>>({});
   const [manualEventExpanded, setManualEventExpanded] = useState<Record<string, boolean>>({});
   const [manualEventJson, setManualEventJson] = useState<Record<string, string>>({});
 
@@ -193,26 +200,94 @@ function Settings() {
     }
   }
 
+  /** 验证路径：调用后端验证该目录下是否存在日志文件，并返回统计信息 */
+  async function validatePath(toolType: string, path: string): Promise<void> {
+    if (!path.trim()) return;
+    setValidatingPath((prev) => ({ ...prev, [toolType]: true }));
+    try {
+      const response = await api.post(`/api/adapters/${toolType}/validate-path`, { path: path.trim() });
+      if (response && (response as any).success !== undefined) {
+        const result = response as any;
+        setPathValidation((prev) => ({
+          ...prev,
+          [toolType]: {
+            ok: !!result.success,
+            message: result.message || '已验证',
+            logFiles: result.totalLogFiles,
+            totalSizeBytes: result.totalSizeBytes,
+            traeRelatedLogs: result.traeRelatedLogs,
+            previewEvents: result.previewEvents,
+            previewModels: result.previewModels,
+            previewTokens: result.previewTokens,
+          },
+        }));
+      } else {
+        setPathValidation((prev) => ({ ...prev, [toolType]: { ok: false, message: '验证失败' } }));
+      }
+    } catch (error) {
+      console.error('[Settings] 路径验证失败', error);
+      setPathValidation((prev) => ({ ...prev, [toolType]: { ok: false, message: '验证失败（网络错误）' } }));
+    } finally {
+      setValidatingPath((prev) => ({ ...prev, [toolType]: false }));
+    }
+  }
+
   async function applyManualPath(toolType: string, path: string) {
     if (!path.trim()) {
       toast.error('请输入有效的目录路径');
       return;
     }
     try {
+      // 先验证路径
+      setValidatingPath((prev) => ({ ...prev, [toolType]: true }));
+      const validate = await api.post(`/api/adapters/${toolType}/validate-path`, { path: path.trim() });
+      if (!validate || !(validate as any).success) {
+        const msg = (validate as any)?.message || '路径验证失败';
+        setPathValidation((prev) => ({ ...prev, [toolType]: { ok: false, message: msg } }));
+        toast.error(msg);
+        setValidatingPath((prev) => ({ ...prev, [toolType]: false }));
+        return;
+      }
+      // 验证通过，显示预览信息
+      const previewEvents = (validate as any).previewEvents || 0;
+      setPathValidation((prev) => ({
+        ...prev,
+        [toolType]: {
+          ok: true,
+          message: (validate as any).message || '路径有效',
+          logFiles: (validate as any).totalLogFiles,
+          totalSizeBytes: (validate as any).totalSizeBytes,
+          traeRelatedLogs: (validate as any).traeRelatedLogs,
+          previewEvents,
+          previewModels: (validate as any).previewModels,
+          previewTokens: (validate as any).previewTokens,
+        },
+      }));
+
+      // 保存配置
       const response = await api.post(`/api/adapters/${toolType}/config`, { logPath: path.trim() });
-      if (response && response.success) {
-        toast.success('目录已设置，正在扫描');
+      if (response && (response as any).success) {
         // 切换到自动模式
         await api.post(`/api/adapters/${toolType}/config`, { mode: 'auto' });
-        // 立即触发一次采集
-        await api.post('/api/adapters/collect', {});
+        // 后端 configure 后已自动触发一次扫描，这里再触发一次保险
+        const collectResp = await api.post('/api/adapters/collect', {});
+        const events = (collectResp as any)?.data?.total ?? (response as any)?.data?.eventsCollected ?? previewEvents;
+        if (events > 0) {
+          toast.success(`✅ 目录已保存，已扫描到 ${events} 条事件`);
+        } else if (previewEvents > 0) {
+          toast.success(`目录已保存，预计可识别 ${previewEvents} 条事件，扫描进行中...`);
+        } else {
+          toast.success('目录已保存，扫描进行中（稍后刷新以查看结果）');
+        }
         loadAdapters();
       } else {
         toast.error('设置失败');
       }
+      setValidatingPath((prev) => ({ ...prev, [toolType]: false }));
     } catch (error) {
       console.error('[Settings] 设置目录失败', error);
       toast.error('设置失败');
+      setValidatingPath((prev) => ({ ...prev, [toolType]: false }));
     }
   }
 
