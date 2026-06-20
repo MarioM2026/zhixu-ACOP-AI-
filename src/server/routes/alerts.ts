@@ -1,15 +1,24 @@
 import express from 'express';
 import { sendTestAlert, setChannelConfig, getChannelConfig, getEnabledChannels, clearChannelConfig } from '../services/alertService';
-import { getAlerts, acknowledgeAlert } from '../services/ruleService';
+import { getAlerts, acknowledgeAlert, acknowledgeAllAlerts, resetAlertsToSample, clearAllAlerts, hasRealAlerts } from '../services/ruleService';
 import { logger } from '../services/logger';
 
 const router = express.Router();
 
-// 获取告警列表
-router.get('/', async (_req, res, next) => {
+// 获取告警列表（支持 limit / unacknowledged 过滤）
+router.get('/', async (req, res, next) => {
   try {
-    const alerts = await getAlerts();
-    res.json({ success: true, data: alerts });
+    const limit = Number(req.query.limit) || 0;
+    const unacknowledged = req.query.unacknowledged === 'true';
+    const allAlerts = await getAlerts();
+    let result = allAlerts;
+    if (unacknowledged) {
+      result = result.filter((a) => !a.acknowledged);
+    }
+    if (limit > 0) {
+      result = result.slice(0, limit);
+    }
+    res.json({ success: true, data: result, total: allAlerts.length, filtered: result.length });
   } catch (error) {
     next(error);
   }
@@ -23,6 +32,46 @@ router.post('/:id/ack', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// 一键确认所有未处理告警
+router.post('/ack-all', async (_req, res, next) => {
+  try {
+    const count = await acknowledgeAllAlerts();
+    logger.info('All alerts acknowledged', { count });
+    res.json({ success: true, message: `已确认 ${count} 条告警`, count });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 重置告警：清空后恢复为 15 条模拟数据
+router.post('/reset', async (_req, res) => {
+  try {
+    const count = await resetAlertsToSample();
+    logger.info('Alerts reset to sample data', { count });
+    res.json({ success: true, message: '已重置为 ' + count + ' 条模拟告警', count });
+  } catch (error) {
+    logger.error('Reset alerts failed', { error: String(error) });
+    res.status(500).json({ success: false, message: String(error) });
+  }
+});
+
+// 清空所有告警记录
+router.delete('/all', async (_req, res) => {
+  try {
+    await clearAllAlerts();
+    logger.info('All alerts cleared');
+    res.json({ success: true, message: '所有告警已清空' });
+  } catch (error) {
+    logger.error('Clear all alerts failed', { error: String(error) });
+    res.status(500).json({ success: false, message: String(error) });
+  }
+});
+
+// 查询当前告警是否是真实数据
+router.get('/status', (_req, res) => {
+  res.json({ success: true, hasRealData: hasRealAlerts() });
 });
 
 // 测试发送告警

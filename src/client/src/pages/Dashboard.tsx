@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   LineChart,
   Line,
@@ -46,7 +47,118 @@ interface ToolUsage {
   errorRate: number;
 }
 
+interface AlertTrend {
+  date: string;
+  critical: number;
+  warning: number;
+  info: number;
+  total: number;
+}
+
+interface AlertStats {
+  total: number;
+  critical: number;
+  warning: number;
+  info: number;
+  acknowledged: number;
+  unacknowledged: number;
+}
+
+interface RuleStat {
+  ruleId: string;
+  ruleName: string;
+  priority: 'low' | 'medium' | 'high';
+  enabled: boolean;
+  triggerCount: number;
+  lastTriggeredAt?: number;
+}
+
+interface RuleStats {
+  total: number;
+  enabled: number;
+  totalTriggers: number;
+  rules: RuleStat[];
+}
+
+// ========== 告警 Banner ==========
+interface BannerAlert {
+  id: string;
+  severity: 'info' | 'warning' | 'error' | 'critical';
+  title: string;
+  message: string;
+  timestamp: number;
+}
+
+function AlertBanner({
+  unacknowledgedCount,
+  recentAlerts,
+  onViewAll,
+  onDismiss,
+}: {
+  unacknowledgedCount: number;
+  recentAlerts: BannerAlert[];
+  onViewAll: () => void;
+  onDismiss: () => void;
+}) {
+  if (unacknowledgedCount === 0) return null;
+
+  const hasCritical = recentAlerts.some((a) => a.severity === 'critical' || a.severity === 'error');
+  const topAlert = recentAlerts[0];
+
+  return (
+    <div className={`alert-banner ${hasCritical ? 'alert-banner-critical' : 'alert-banner-warning'}`}>
+      <div className="alert-banner-icon">
+        {hasCritical ? '⚠' : '⚡'}
+      </div>
+      <div className="alert-banner-body">
+        <div className="alert-banner-title">
+          <span className="alert-banner-count">{unacknowledgedCount} 条未处理告警</span>
+          {topAlert && (
+            <span className="alert-banner-latest">
+              · 最新：{topAlert.title} — {topAlert.message.slice(0, 60)}
+              {topAlert.message.length > 60 ? '...' : ''}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="alert-banner-actions">
+        <button className="btn btn-outline" onClick={onViewAll}>
+          查看详情
+        </button>
+        <button className="btn btn-ghost" onClick={onDismiss} title="暂时隐藏">
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface PromptStats {
+  total: number;
+  byType: {
+    code_quality: number;
+    context_cleanup: number;
+    error_rate_reduction: number;
+    latency_optimization: number;
+    token_management: number;
+  };
+  byStatus: {
+    generated: number;
+    reviewed: number;
+    applied: number;
+    dismissed: number;
+  };
+  recentlyGenerated: number;
+}
+
 const COLORS = ['#00f5ff', '#00ff88', '#ff6b35', '#ff3366'];
+
+// 告警严重程度颜色
+const ALERT_COLORS = {
+  critical: '#ff3366',
+  warning: '#ff6b35',
+  info: '#00f5ff',
+};
 
 // 周期选项
 const TIME_RANGES = [
@@ -241,12 +353,47 @@ function Dashboard() {
   const [tokenTrend, setTokenTrend] = useState<TokenTrend[]>([]);
   const [errorDistribution, setErrorDistribution] = useState<ErrorDistribution[]>([]);
   const [toolUsage, setToolUsage] = useState<ToolUsage[]>([]);
+  const [alertTrend, setAlertTrend] = useState<AlertTrend[]>([]);
+  const [alertStats, setAlertStats] = useState<AlertStats>({
+    total: 0,
+    critical: 0,
+    warning: 0,
+    info: 0,
+    acknowledged: 0,
+    unacknowledged: 0,
+  });
+  const [ruleStats, setRuleStats] = useState<RuleStats>({
+    total: 0,
+    enabled: 0,
+    totalTriggers: 0,
+    rules: [],
+  });
+  const [promptStats, setPromptStats] = useState<PromptStats>({
+    total: 0,
+    byType: {
+      code_quality: 0,
+      context_cleanup: 0,
+      error_rate_reduction: 0,
+      latency_optimization: 0,
+      token_management: 0,
+    },
+    byStatus: {
+      generated: 0,
+      reviewed: 0,
+      applied: 0,
+      dismissed: 0,
+    },
+    recentlyGenerated: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [time, setTime] = useState(new Date());
   const [timeRange, setTimeRange] = useState<DateRange>({ type: 'preset', days: 7 });
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [recentAlerts, setRecentAlerts] = useState<BannerAlert[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const navigate = useNavigate();
   const { toasts, showToast, removeToast: removeToastToast } = useToast();
   const toast = createToastApi(showToast);
 
@@ -262,11 +409,16 @@ function Dashboard() {
     setLoading(true);
     try {
       const queryParams = getQueryParams();
-      const [statsRes, trendRes, errorRes, toolRes] = await Promise.all([
+      const [statsRes, trendRes, errorRes, toolRes, alertTrendRes, alertStatsRes, ruleStatsRes, promptStatsRes, alertsRes] = await Promise.all([
         api.get<DashboardStats>(`/api/dashboard/stats?${queryParams}`),
         api.get<TokenTrend[]>(`/api/dashboard/token-trend?${queryParams}`),
         api.get<ErrorDistribution[]>(`/api/dashboard/error-distribution?${queryParams}`),
         api.get<ToolUsage[]>(`/api/dashboard/tool-usage?${queryParams}`),
+        api.get<AlertTrend[]>(`/api/dashboard/alert-trend?${queryParams}`),
+        api.get<AlertStats>(`/api/dashboard/alert-stats`),
+        api.get<RuleStats>(`/api/dashboard/rule-stats`),
+        api.get<PromptStats>(`/api/prompt-injections/stats`),
+        api.get<BannerAlert[]>(`/api/alerts?limit=5&unacknowledged=true`),
       ]);
 
       setStats(statsRes.data || {
@@ -280,6 +432,43 @@ function Dashboard() {
       setTokenTrend(trendRes.data || []);
       setErrorDistribution(errorRes.data || []);
       setToolUsage(toolRes.data || []);
+      setAlertTrend(alertTrendRes.data || []);
+      setAlertStats(alertStatsRes.data || {
+        total: 0,
+        critical: 0,
+        warning: 0,
+        info: 0,
+        acknowledged: 0,
+        unacknowledged: 0,
+      });
+      setRuleStats(ruleStatsRes.data || {
+        total: 0,
+        enabled: 0,
+        totalTriggers: 0,
+        rules: [],
+      });
+      setPromptStats(promptStatsRes.data || {
+        total: 0,
+        byType: {
+          code_quality: 0,
+          context_cleanup: 0,
+          error_rate_reduction: 0,
+          latency_optimization: 0,
+          token_management: 0,
+        },
+        byStatus: {
+          generated: 0,
+          reviewed: 0,
+          applied: 0,
+          dismissed: 0,
+        },
+        recentlyGenerated: 0,
+      });
+      const alertsData = alertsRes?.data || [];
+      setRecentAlerts(alertsData);
+      if (alertsData.length > 0) {
+        setBannerDismissed(false);
+      }
       setLastUpdate(new Date());
       toast.success(`数据已更新 (${new Date().toLocaleTimeString()})`);
     } catch (error) {
@@ -396,6 +585,16 @@ function Dashboard() {
         </div>
       </div>
 
+      {/* 告警 Banner */}
+      {!bannerDismissed && (
+        <AlertBanner
+          unacknowledgedCount={alertStats.unacknowledged}
+          recentAlerts={recentAlerts}
+          onViewAll={() => navigate('/alerts')}
+          onDismiss={() => setBannerDismissed(true)}
+        />
+      )}
+
       {/* 统计卡片 - 迷你版 */}
       <div className="stats-grid">
         <MiniStatCard
@@ -426,6 +625,84 @@ function Dashboard() {
           change="8.2%"
           trend="up"
         />
+      </div>
+
+      {/* 告警统计卡片 */}
+      <div className="stats-grid" style={{ marginTop: '1rem' }}>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #ff3366' }}>
+          <div className="mini-stat-icon" style={{ color: '#ff3366' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#ff3366' }}>{alertStats.critical}</div>
+            <div className="mini-stat-label">严重告警</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #ff6b35' }}>
+          <div className="mini-stat-icon" style={{ color: '#ff6b35' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#ff6b35' }}>{alertStats.warning}</div>
+            <div className="mini-stat-label">警告告警</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #00f5ff' }}>
+          <div className="mini-stat-icon" style={{ color: '#00f5ff' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#00f5ff' }}>{alertStats.info}</div>
+            <div className="mini-stat-label">信息告警</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #00ff88' }}>
+          <div className="mini-stat-icon" style={{ color: '#00ff88' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#00ff88' }}>{alertStats.unacknowledged}</div>
+            <div className="mini-stat-label">未确认</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #9966ff' }}>
+          <div className="mini-stat-icon" style={{ color: '#9966ff' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#9966ff' }}>{alertStats.acknowledged}</div>
+            <div className="mini-stat-label">已确认</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #ffaa00' }}>
+          <div className="mini-stat-icon" style={{ color: '#ffaa00' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#ffaa00' }}>{alertStats.total}</div>
+            <div className="mini-stat-label">总计</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 提示注入统计卡片 */}
+      <div className="stats-grid" style={{ marginTop: '1rem' }}>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #9966ff' }}>
+          <div className="mini-stat-icon" style={{ color: '#9966ff' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#9966ff' }}>{promptStats.total}</div>
+            <div className="mini-stat-label">提示总数</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #00ff88' }}>
+          <div className="mini-stat-icon" style={{ color: '#00ff88' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#00ff88' }}>{promptStats.byStatus.applied || 0}</div>
+            <div className="mini-stat-label">已应用</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #ffaa00' }}>
+          <div className="mini-stat-icon" style={{ color: '#ffaa00' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#ffaa00' }}>{(promptStats.byStatus.generated || 0) + (promptStats.byStatus.reviewed || 0)}</div>
+            <div className="mini-stat-label">待处理</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #00f5ff' }}>
+          <div className="mini-stat-icon" style={{ color: '#00f5ff' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#00f5ff' }}>{promptStats.recentlyGenerated}</div>
+            <div className="mini-stat-label">近24小时</div>
+          </div>
+        </div>
       </div>
 
       {/* 图表区域 */}
@@ -482,6 +759,185 @@ function Dashboard() {
                 />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+        </FullscreenPanel>
+
+        {/* 告警趋势图 */}
+        <FullscreenPanel
+          title="告警趋势"
+          isFullscreen={activePanel === 'alert'}
+          onToggle={() => toggleFullscreen('alert')}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', height: activePanel === 'alert' ? 'calc(100vh - 200px)' : '280px' }}>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={alertTrend}>
+                <defs>
+                  <linearGradient id="criticalGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ff3366" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#ff3366" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="warningGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ff6b35" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#ff6b35" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="infoGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#00f5ff" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#00f5ff" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1a3a4a" />
+                <XAxis dataKey="date" stroke="#4a6a7a" fontSize={11} tickLine={false} />
+                <YAxis stroke="#4a6a7a" fontSize={11} tickLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'rgba(10, 20, 30, 0.95)',
+                    border: '1px solid #00f5ff',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                  }}
+                  labelStyle={{ color: '#00f5ff' }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="critical"
+                  stroke="#ff3366"
+                  strokeWidth={2}
+                  dot={{ r: 4, fill: '#ff3366' }}
+                  name="严重"
+                  activeDot={{ r: 6, fill: '#ff3366' }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="warning"
+                  stroke="#ff6b35"
+                  strokeWidth={2}
+                  dot={{ r: 4, fill: '#ff6b35' }}
+                  name="警告"
+                  activeDot={{ r: 6, fill: '#ff6b35' }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="info"
+                  stroke="#00f5ff"
+                  strokeWidth={2}
+                  dot={{ r: 4, fill: '#00f5ff' }}
+                  name="信息"
+                  activeDot={{ r: 6, fill: '#00f5ff' }}
+                />
+              </LineChart>
+              </ResponsiveContainer>
+            </div>
+            {/* 图例 */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', marginTop: '0.5rem', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#ff3366' }} />
+                <span style={{ color: '#ff3366', fontSize: '0.75rem' }}>严重</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#ff6b35' }} />
+                <span style={{ color: '#ff6b35', fontSize: '0.75rem' }}>警告</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#00f5ff' }} />
+                <span style={{ color: '#00f5ff', fontSize: '0.75rem' }}>信息</span>
+              </div>
+            </div>
+          </div>
+        </FullscreenPanel>
+
+        {/* 规则触发统计 */}
+        <FullscreenPanel
+          title="规则触发统计"
+          isFullscreen={activePanel === 'rules'}
+          onToggle={() => toggleFullscreen('rules')}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* 概览数字 */}
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{
+                flex: 1, minWidth: 120, padding: '1rem',
+                border: '1px solid rgba(0, 245, 255, 0.2)',
+                borderRadius: '6px', background: 'rgba(0, 245, 255, 0.05)'
+              }}>
+                <div style={{ color: '#00f5ff', fontSize: '0.75rem', marginBottom: '0.25rem' }}>规则总数</div>
+                <div style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 600 }}>{ruleStats.total}</div>
+              </div>
+              <div style={{
+                flex: 1, minWidth: 120, padding: '1rem',
+                border: '1px solid rgba(0, 255, 136, 0.2)',
+                borderRadius: '6px', background: 'rgba(0, 255, 136, 0.05)'
+              }}>
+                <div style={{ color: '#00ff88', fontSize: '0.75rem', marginBottom: '0.25rem' }}>已启用</div>
+                <div style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 600 }}>{ruleStats.enabled}</div>
+              </div>
+              <div style={{
+                flex: 1, minWidth: 120, padding: '1rem',
+                border: '1px solid rgba(255, 107, 53, 0.2)',
+                borderRadius: '6px', background: 'rgba(255, 107, 53, 0.05)'
+              }}>
+                <div style={{ color: '#ff6b35', fontSize: '0.75rem', marginBottom: '0.25rem' }}>累计触发</div>
+                <div style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 600 }}>{ruleStats.totalTriggers}</div>
+              </div>
+            </div>
+
+            {/* 规则列表 */}
+            <div>
+              {ruleStats.rules.length === 0 ? (
+                <div style={{ color: '#6a8a9a', textAlign: 'center', padding: '2rem' }}>暂无规则</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {ruleStats.rules.map((rule) => {
+                    const priorityColor =
+                      rule.priority === 'high' ? '#ff3366' :
+                      rule.priority === 'medium' ? '#ff6b35' : '#00f5ff';
+                    const priorityLabel =
+                      rule.priority === 'high' ? '高' :
+                      rule.priority === 'medium' ? '中' : '低';
+                    return (
+                      <div
+                        key={rule.ruleId}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '0.75rem 1rem',
+                          border: '1px solid rgba(0, 245, 255, 0.15)',
+                          borderRadius: '6px',
+                          background: rule.enabled ? 'rgba(0, 245, 255, 0.03)' : 'rgba(0,0,0,0.2)',
+                          opacity: rule.enabled ? 1 : 0.55,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <span style={{
+                            display: 'inline-block',
+                            padding: '2px 8px',
+                            background: `${priorityColor}20`,
+                            color: priorityColor,
+                            fontSize: '0.7rem',
+                            borderRadius: '3px',
+                            border: `1px solid ${priorityColor}40`,
+                          }}>{priorityLabel}</span>
+                          <span style={{ color: '#fff', fontSize: '0.85rem' }}>{rule.ruleName}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', fontSize: '0.75rem' }}>
+                          <span style={{ color: '#8a9aaa' }}>
+                            {rule.lastTriggeredAt
+                              ? new Date(rule.lastTriggeredAt).toLocaleString('zh-CN')
+                              : '未触发'}
+                          </span>
+                          <span style={{
+                            color: '#00f5ff', fontWeight: 600, minWidth: '48px', textAlign: 'right'
+                          }}>
+                            {rule.triggerCount} 次
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </FullscreenPanel>
 
