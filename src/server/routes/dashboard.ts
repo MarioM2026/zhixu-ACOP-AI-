@@ -8,6 +8,7 @@ import {
   getAlertTrend,
   getAlertStats,
   getRuleStats,
+  getRouterStats,
 } from '../services/dashboardService';
 
 const router = Router();
@@ -112,6 +113,16 @@ router.get('/alert-stats', async (_req, res, next) => {
 router.get('/rule-stats', async (_req, res, next) => {
   try {
     const stats = await getRuleStats();
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 获取路由决策统计
+router.get('/router-stats', async (_req, res, next) => {
+  try {
+    const stats = await getRouterStats();
     res.json({ success: true, data: stats });
   } catch (error) {
     next(error);

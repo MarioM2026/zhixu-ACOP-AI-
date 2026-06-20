@@ -55,12 +55,34 @@ interface SimResult {
   topPick: { modelId: string; totalScore: number; reason: string };
 }
 
+interface RoutingDecision {
+  decisionId: string; timestamp: number;
+  input: { taskType: string; sessionId: string; inputTokens: number; userIntent: string };
+  candidates: Array<{ modelId: string; totalScore: number; reason: string }>;
+  selected: { modelId: string; reason: string; confidence: number };
+  strategy: string;
+}
+
+// 常用场景示例（供用户快速测试路由）
+const SCENARIO_SAMPLES: Array<{ name: string; input: string; strategy: string }> = [
+  { name: 'Bug 修复', input: '帮我修复这个空指针异常，错误信息：Cannot read property of undefined', strategy: 'quality_optimized' },
+  { name: '代码生成', input: '请帮我写一个 REST API 控制器，包含 CRUD 四个操作', strategy: 'quality_optimized' },
+  { name: '安全审查', input: '请审查这段代码，看看有没有 SQL 注入、XSS 等安全漏洞', strategy: 'quality_optimized' },
+  { name: '测试生成', input: '请为这个函数生成单元测试，覆盖主要的边界情况', strategy: 'quality_optimized' },
+  { name: '架构设计', input: '我需要设计一个微服务系统的架构，请给出设计方案', strategy: 'quality_optimized' },
+  { name: '代码补全', input: '帮我完成这段代码：function parseJSON(str) {', strategy: 'speed_optimized' },
+  { name: '文档生成', input: '请为这个 Python 模块生成详细的 API 文档，包括参数说明和示例', strategy: 'balanced' },
+  { name: '重构优化', input: '请帮我重构这段代码，让它更简洁、更易维护', strategy: 'quality_optimized' },
+];
+
 function ModelRouting() {
   const [activeTab, setActiveTab] = useState<'simulate' | 'models' | 'rules' | 'stats'>('simulate');
   const [models, setModels] = useState<ModelProfile[]>([]);
   const [rules, setRules] = useState<RoutingRule[]>([]);
   const [stats, setStats] = useState<RoutingStats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [templates, setTemplates] = useState<RoutingRule[]>([]);
+  const [routingHistory, setRoutingHistory] = useState<RoutingDecision[]>([]);
 
   // 模拟输入
   const [simInput, setSimInput] = useState('请帮我审查这段代码，看看有没有安全漏洞');
@@ -85,17 +107,35 @@ function ModelRouting() {
     } catch { } finally { setSimRunning(false); }
   }
 
+  // 从模板添加规则
+  async function addTemplateRule(template: RoutingRule) {
+    try {
+      const ruleToAdd = {
+        ...template,
+        id: undefined, // 让后端生成新 ID
+        enabled: true,
+        priority: template.priority || 5,
+      };
+      await api.post('/api/router/rules', ruleToAdd);
+      loadAll();
+    } catch { }
+  }
+
   async function loadAll() {
     setLoading(true);
     try {
-      const [modelsR, rulesR, statsR] = await Promise.all([
+      const [modelsR, rulesR, statsR, templatesR, historyR] = await Promise.all([
         api.get<ModelProfile[]>('/api/router/models'),
         api.get<RoutingRule[]>('/api/router/rules'),
         api.get<RoutingStats>('/api/router/stats'),
+        api.get<RoutingRule[]>('/api/router/rules/templates'),
+        api.get<RoutingDecision[]>('/api/router/history?limit=20'),
       ]);
       if (modelsR.success) setModels(modelsR.data || []);
       if (rulesR.success) setRules(rulesR.data || []);
       if (statsR.success) setStats(statsR.data || null);
+      if (templatesR.success) setTemplates(templatesR.data || []);
+      if (historyR.success) setRoutingHistory(historyR.data || []);
     } finally { setLoading(false); }
   }
 
@@ -156,99 +196,151 @@ function ModelRouting() {
 
       {/* 路由模拟 */}
       {activeTab === 'simulate' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-          <div className="card">
-            <h3 style={{ marginBottom: '1rem' }}>🎯 输入任务描述</h3>
-            <textarea
-              value={simInput}
-              onChange={e => setSimInput(e.target.value)}
-              style={{
-                width: '100%', minHeight: 120, padding: '0.75rem', borderRadius: 8,
-                background: 'var(--card-bg)', border: '1px solid var(--border-color)',
-                color: 'var(--text-color)', fontSize: '0.9rem', marginBottom: '1rem',
-                resize: 'vertical', fontFamily: 'inherit',
-              }}
-              placeholder="输入任务描述，如：帮我修复这个 Bug / 审查代码安全性 / 优化这段代码性能"
-            />
-            <div className="form-group" style={{ marginBottom: '1rem' }}>
-              <label>路由策略</label>
-              <select value={simStrategy} onChange={e => setSimStrategy(e.target.value)}>
-                <option value="balanced">均衡策略</option>
-                <option value="cost_optimized">成本优先（最低成本模型）</option>
-                <option value="speed_optimized">速度优先（最快响应）</option>
-                <option value="quality_optimized">质量优先（最强能力）</option>
-              </select>
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div className="card">
+              <h3 style={{ marginBottom: '1rem' }}>🎯 输入任务描述</h3>
+              <textarea
+                value={simInput}
+                onChange={e => setSimInput(e.target.value)}
+                style={{
+                  width: '100%', minHeight: 120, padding: '0.75rem', borderRadius: 8,
+                  background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+                  color: 'var(--text-color)', fontSize: '0.9rem', marginBottom: '1rem',
+                  resize: 'vertical', fontFamily: 'inherit',
+                }}
+                placeholder="输入任务描述，如：帮我修复这个 Bug / 审查代码安全性 / 优化这段代码性能"
+              />
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                💡 常用场景示例（点击快速填入）：
+              </div>
+              <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+                {SCENARIO_SAMPLES.map((s) => (
+                  <button key={s.name} className="btn btn-secondary" style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                    onClick={() => { setSimInput(s.input); setSimStrategy(s.strategy); }}>
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label>路由策略</label>
+                <select value={simStrategy} onChange={e => setSimStrategy(e.target.value)}>
+                  <option value="balanced">均衡策略</option>
+                  <option value="cost_optimized">成本优先（最低成本模型）</option>
+                  <option value="speed_optimized">速度优先（最快响应）</option>
+                  <option value="quality_optimized">质量优先（最强能力）</option>
+                </select>
+              </div>
+              <button className="btn btn-primary" onClick={runSimulate} disabled={simRunning || !simInput.trim()}>
+                {simRunning ? '分析中...' : '🔍 执行路由分析'}
+              </button>
             </div>
-            <button className="btn btn-primary" onClick={runSimulate} disabled={simRunning || !simInput.trim()}>
-              {simRunning ? '分析中...' : '🔍 执行路由分析'}
-            </button>
+
+            <div className="card">
+              <h3 style={{ marginBottom: '1rem' }}>📊 路由决策结果</h3>
+              {simResult ? (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                    <span style={{
+                      padding: '0.25rem 0.75rem', borderRadius: 12, fontSize: '0.8rem',
+                      background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6',
+                      border: '1px solid rgba(139, 92, 246, 0.3)',
+                    }}>
+                      {simResult.taskTypeName}
+                    </span>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                      置信度 {(simResult.confidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
+
+                  <div style={{
+                    padding: '1rem', borderRadius: 10, marginBottom: '1rem',
+                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(59, 130, 246, 0.1))',
+                    border: '1px solid var(--border-color)',
+                  }}>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                      推荐模型
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>
+                      {simResult.topPick.modelId}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      {simResult.topPick.reason}（综合评分 {simResult.topPick.totalScore}）
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                    候选模型排行
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {simResult.candidates.map((c, i) => (
+                      <div key={c.modelId} style={{
+                        display: 'flex', alignItems: 'center', gap: '0.75rem',
+                        padding: '0.5rem 0.75rem', borderRadius: 6,
+                        background: i === 0 ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                        border: `1px solid ${i === 0 ? 'rgba(16, 185, 129, 0.3)' : 'var(--border-color)'}`,
+                      }}>
+                        <span style={{
+                          width: 20, height: 20, borderRadius: '50%', display: 'flex',
+                          alignItems: 'center', justifyContent: 'center',
+                          fontSize: '0.75rem', fontWeight: 700,
+                          background: i === 0 ? '#10b981' : i === 1 ? '#6b7280' : '#374151',
+                          color: '#fff',
+                        }}>{i + 1}</span>
+                        <span style={{ flex: 1, fontSize: '0.85rem' }}>{c.modelId}</span>
+                        <span style={{ color: '#f59e0b', fontSize: '0.85rem' }}>{c.totalScore}</span>
+                        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
+                          <span style={{ color: '#10b981' }}>💰{c.costScore}</span>
+                          <span style={{ color: '#3b82f6' }}>⚡{c.speedScore}</span>
+                          <span style={{ color: '#8b5cf6' }}>🎯{c.capabilityScore}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>
+                  输入任务描述后点击「执行路由分析」
+                </div>
+              )}
+            </div>
           </div>
 
+          {/* 路由历史记录 */}
           <div className="card">
-            <h3 style={{ marginBottom: '1rem' }}>📊 路由决策结果</h3>
-            {simResult ? (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <span style={{
-                    padding: '0.25rem 0.75rem', borderRadius: 12, fontSize: '0.8rem',
-                    background: 'rgba(139, 92, 246, 0.15)', color: '#8b5cf6',
-                    border: '1px solid rgba(139, 92, 246, 0.3)',
+            <h3 style={{ marginBottom: '1rem' }}>📜 路由决策历史（最近 {Math.min(routingHistory.length, 20)} 条）</h3>
+            {routingHistory.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 400, overflowY: 'auto' }}>
+                {routingHistory.slice(-20).reverse().map((d) => (
+                  <div key={d.decisionId} style={{
+                    display: 'flex', alignItems: 'center', gap: '0.75rem',
+                    padding: '0.5rem 0.75rem', borderRadius: 6,
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-secondary)',
                   }}>
-                    {simResult.taskTypeName}
-                  </span>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                    置信度 {(simResult.confidence * 100).toFixed(0)}%
-                  </span>
-                </div>
-
-                <div style={{
-                  padding: '1rem', borderRadius: 10, marginBottom: '1rem',
-                  background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(59, 130, 246, 0.1))',
-                  border: '1px solid var(--border-color)',
-                }}>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                    推荐模型
-                  </div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-color)', marginBottom: '0.25rem' }}>
-                    {simResult.topPick.modelId}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    {simResult.topPick.reason}（综合评分 {simResult.topPick.totalScore}）
-                  </div>
-                </div>
-
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-                  候选模型排行
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {simResult.candidates.map((c, i) => (
-                    <div key={c.modelId} style={{
-                      display: 'flex', alignItems: 'center', gap: '0.75rem',
-                      padding: '0.5rem 0.75rem', borderRadius: 6,
-                      background: i === 0 ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
-                      border: `1px solid ${i === 0 ? 'rgba(16, 185, 129, 0.3)' : 'var(--border-color)'}`,
+                    <span style={{
+                      padding: '0.2rem 0.5rem', borderRadius: 6, fontSize: '0.75rem',
+                      background: `${STRATEGY_LABELS[d.strategy]?.color || '#6b7280'}22`,
+                      color: STRATEGY_LABELS[d.strategy]?.color || '#6b7280',
+                      whiteSpace: 'nowrap',
                     }}>
-                      <span style={{
-                        width: 20, height: 20, borderRadius: '50%', display: 'flex',
-                        alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.75rem', fontWeight: 700,
-                        background: i === 0 ? '#10b981' : i === 1 ? '#6b7280' : '#374151',
-                        color: '#fff',
-                      }}>{i + 1}</span>
-                      <span style={{ flex: 1, fontSize: '0.85rem' }}>{c.modelId}</span>
-                      <span style={{ color: '#f59e0b', fontSize: '0.85rem' }}>{c.totalScore}</span>
-                      <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
-                        <span style={{ color: '#10b981' }}>💰{c.costScore}</span>
-                        <span style={{ color: '#3b82f6' }}>⚡{c.speedScore}</span>
-                        <span style={{ color: '#8b5cf6' }}>🎯{c.capabilityScore}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                      {TASK_TYPE_LABELS[d.input.taskType] || d.input.taskType}
+                    </span>
+                    <span style={{ flex: 1, fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {d.input.userIntent || '(无描述)'}
+                    </span>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#10b981' }}>
+                      → {d.selected.modelId}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                      {new Date(d.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                ))}
               </div>
             ) : (
               <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>
-                输入任务描述后点击「执行路由分析」
+                暂无路由决策历史。通过 POST /api/router/route 接口调用路由后，历史会显示在这里。
               </div>
             )}
           </div>
@@ -348,61 +440,113 @@ function ModelRouting() {
 
       {/* 路由规则 */}
       {activeTab === 'rules' && (
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h3>📋 路由规则列表</h3>
-            <button className="btn btn-primary" onClick={() => { setEditingRule(null); setShowRuleModal(true); }}>
-              + 新增规则
-            </button>
+        <div>
+          {/* 预置模板快速添加 */}
+          <div className="card" style={{ marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3>📦 预置规则模板（一键添加）</h3>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                共 {templates.length} 个可用模板
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.75rem' }}>
+              {templates.map((t) => {
+                const alreadyExists = rules.some((r) => r.name === t.name);
+                return (
+                  <div key={t.id} style={{
+                    padding: '0.75rem', borderRadius: 8, border: '1px solid var(--border-color)',
+                    background: 'var(--bg-secondary)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{t.name}</div>
+                      <span style={{
+                        padding: '0.1rem 0.4rem', borderRadius: 6, fontSize: '0.7rem',
+                        background: `${STRATEGY_LABELS[t.strategy]?.color || '#6b7280'}22`,
+                        color: STRATEGY_LABELS[t.strategy]?.color || '#6b7280',
+                        whiteSpace: 'nowrap',
+                      }}>{STRATEGY_LABELS[t.strategy]?.name || t.strategy}</span>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                      {t.description}
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginBottom: '0.5rem' }}>
+                      {t.conditions.taskTypes.map((tt) => (
+                        <span key={tt} style={{
+                          fontSize: '0.7rem', padding: '0.1rem 0.4rem', borderRadius: 4,
+                          background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6',
+                        }}>{TASK_TYPE_LABELS[tt] || tt}</span>
+                      ))}
+                    </div>
+                    <button
+                      className={alreadyExists ? 'btn btn-secondary' : 'btn btn-primary'}
+                      style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', width: '100%' }}
+                      onClick={() => addTemplateRule(t)}
+                      disabled={alreadyExists}
+                    >
+                      {alreadyExists ? '✓ 已存在' : '+ 添加到规则'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {rules.map(rule => (
-              <div key={rule.id} style={{
-                padding: '1rem', borderRadius: 10, border: '1px solid var(--border-color)',
-                background: rule.enabled ? 'var(--bg-secondary)' : 'rgba(107, 114, 128, 0.05)',
-                opacity: rule.enabled ? 1 : 0.6,
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{rule.name}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{rule.description}</div>
+
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <h3>📋 当前规则列表</h3>
+              <button className="btn btn-primary" onClick={() => { setEditingRule(null); setShowRuleModal(true); }}>
+                + 新增规则
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {rules.map(rule => (
+                <div key={rule.id} style={{
+                  padding: '1rem', borderRadius: 10, border: '1px solid var(--border-color)',
+                  background: rule.enabled ? 'var(--bg-secondary)' : 'rgba(107, 114, 128, 0.05)',
+                  opacity: rule.enabled ? 1 : 0.6,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{rule.name}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{rule.description}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <span style={{
+                        padding: '0.2rem 0.6rem', borderRadius: 10, fontSize: '0.75rem',
+                        background: `${STRATEGY_LABELS[rule.strategy]?.color || '#6b7280'}22`,
+                        color: STRATEGY_LABELS[rule.strategy]?.color || '#6b7280',
+                      }}>
+                        {STRATEGY_LABELS[rule.strategy]?.name || rule.strategy}
+                      </span>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>优先级 {rule.priority}</span>
+                      <input type="checkbox" checked={rule.enabled}
+                        onChange={e => toggleRule(rule.id, e.target.checked)} />
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span style={{
-                      padding: '0.2rem 0.6rem', borderRadius: 10, fontSize: '0.75rem',
-                      background: `${STRATEGY_LABELS[rule.strategy]?.color}22`,
-                      color: STRATEGY_LABELS[rule.strategy]?.color,
-                    }}>
-                      {STRATEGY_LABELS[rule.strategy]?.name}
-                    </span>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>优先级 {rule.priority}</span>
-                    <input type="checkbox" checked={rule.enabled}
-                      onChange={e => toggleRule(rule.id, e.target.checked)} />
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                    {rule.conditions.taskTypes.map(t => (
+                      <span key={t} style={{
+                        padding: '0.15rem 0.5rem', borderRadius: 6, fontSize: '0.75rem',
+                        background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6',
+                      }}>
+                        {TASK_TYPE_LABELS[t] || t}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    <button className="btn btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
+                      onClick={() => { setEditingRule(rule); setShowRuleModal(true); }}>编辑</button>
+                    <button className="btn btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger-color)' }}
+                      onClick={() => deleteRule(rule.id)}>删除</button>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-                  {rule.conditions.taskTypes.map(t => (
-                    <span key={t} style={{
-                      padding: '0.15rem 0.5rem', borderRadius: 6, fontSize: '0.75rem',
-                      background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6',
-                    }}>
-                      {TASK_TYPE_LABELS[t] || t}
-                    </span>
-                  ))}
+              ))}
+              {rules.length === 0 && (
+                <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>
+                  暂无路由规则。从上方模板快速添加，或点击右上角"新增规则"自定义。
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  <button className="btn btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}
-                    onClick={() => { setEditingRule(rule); setShowRuleModal(true); }}>编辑</button>
-                  <button className="btn btn-secondary" style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger-color)' }}
-                    onClick={() => deleteRule(rule.id)}>删除</button>
-                </div>
-              </div>
-            ))}
-            {rules.length === 0 && (
-              <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>
-                暂无路由规则
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}

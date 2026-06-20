@@ -9,6 +9,18 @@ import type {
 } from '@zhixu/shared/types';
 import { logger } from './logger';
 import { getAlerts, getRules } from './ruleService';
+import { routerService } from './routerService';
+import type { RoutingStats } from '@zhixu/shared/types';
+
+export interface RouterStats {
+  totalDecisions: number;
+  activeModels: number;
+  topModel: string;
+  topStrategy: string;
+  taskTypeDistribution: Record<string, number>;
+  strategyUsage: Record<string, number>;
+  modelUsage: Record<string, number>;
+}
 
 // 内存存储（开发环境使用，生产环境应使用数据库）
 const events: Map<string, any> = new Map();
@@ -350,5 +362,39 @@ export async function getRuleStats(): Promise<{
     enabled: rules.filter((r) => r.enabled).length,
     totalTriggers,
     rules: stats,
+  };
+}
+
+/**
+ * 获取路由决策统计（从 routerService 聚合）
+ */
+export async function getRouterStats(): Promise<RouterStats> {
+  const stats: RoutingStats = routerService.getStats();
+  const strategyNames: Record<string, string> = {
+    cost_optimized: '成本优先',
+    speed_optimized: '速度优先',
+    quality_optimized: '质量优先',
+    balanced: '均衡策略',
+    custom: '自定义',
+  };
+
+  // 找出使用最多的模型
+  const modelEntries = Object.entries(stats.modelUsage).sort((a, b) => b[1] - a[1]);
+  const topModel = modelEntries[0]?.[0] || '-';
+
+  // 找出使用最多的策略
+  const strategyEntries = Object.entries(stats.strategyUsage).sort((a, b) => b[1] - a[1]);
+  const topStrategy = strategyEntries[0]
+    ? `${strategyNames[strategyEntries[0][0]] || strategyEntries[0][0]} (${strategyEntries[0][1]}次)`
+    : '-';
+
+  return {
+    totalDecisions: stats.totalDecisions,
+    activeModels: modelEntries.length,
+    topModel,
+    topStrategy,
+    taskTypeDistribution: stats.taskTypeDistribution as Record<string, number>,
+    strategyUsage: stats.strategyUsage as Record<string, number>,
+    modelUsage: stats.modelUsage,
   };
 }

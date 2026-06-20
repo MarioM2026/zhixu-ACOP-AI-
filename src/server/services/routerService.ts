@@ -91,10 +91,11 @@ class RouterService {
     }
   }
 
-  private async initDefaultRules() {
-    const defaultRules: RoutingRule[] = [
+  /** 获取预置路由规则模板列表（供前端快速添加使用） */
+  getRuleTemplates(): RoutingRule[] {
+    return [
       {
-        id: 'rule-cost-sensitive',
+        id: 'tmpl-cost-sensitive',
         name: '成本敏感场景',
         description: '对 Token 消耗敏感的简单任务，优先使用低成本模型',
         enabled: true,
@@ -103,7 +104,7 @@ class RouterService {
         priority: 1,
       },
       {
-        id: 'rule-quality-critical',
+        id: 'tmpl-quality-critical',
         name: '质量关键场景',
         description: '安全审查、Bug修复等高风险任务，优先保证质量',
         enabled: true,
@@ -112,7 +113,7 @@ class RouterService {
         priority: 10,
       },
       {
-        id: 'rule-speed-critical',
+        id: 'tmpl-speed-critical',
         name: '速度优先场景',
         description: '需要快速响应的交互式任务，优先选择低延迟模型',
         enabled: true,
@@ -120,7 +121,60 @@ class RouterService {
         strategy: 'speed_optimized',
         priority: 5,
       },
+      {
+        id: 'tmpl-coding-optimized',
+        name: '编码优化场景',
+        description: '代码生成、代码补全等日常编码任务，使用通义千问/DeepSeek等编码模型',
+        enabled: true,
+        conditions: { taskTypes: ['code_generation', 'code_completion', 'refactoring'] },
+        strategy: 'quality_optimized',
+        priority: 8,
+      },
+      {
+        id: 'tmpl-complex-reasoning',
+        name: '复杂推理场景',
+        description: '复杂逻辑分析、架构设计、代码迁移等需要深度推理的任务',
+        enabled: true,
+        conditions: { taskTypes: ['architecture', 'migration', 'refactoring'] },
+        strategy: 'quality_optimized',
+        priority: 12,
+      },
+      {
+        id: 'tmpl-testing-specialized',
+        name: '测试生成场景',
+        description: '单元测试、集成测试生成任务，使用代码理解能力强的模型',
+        enabled: true,
+        conditions: { taskTypes: ['testing'] },
+        strategy: 'quality_optimized',
+        priority: 9,
+      },
+      {
+        id: 'tmpl-documentation-focused',
+        name: '文档生成场景',
+        description: '代码文档、API 文档、README 等文档生成任务',
+        enabled: true,
+        conditions: { taskTypes: ['documentation', 'explanation'] },
+        strategy: 'balanced',
+        priority: 6,
+      },
+      {
+        id: 'tmpl-code-review-strict',
+        name: '严格代码审查',
+        description: '代码审查任务，优先选择理解能力强、能够发现潜在问题的高质量模型',
+        enabled: true,
+        conditions: { taskTypes: ['code_review'] },
+        strategy: 'quality_optimized',
+        priority: 11,
+      },
     ];
+  }
+
+  private async initDefaultRules() {
+    const templates = this.getRuleTemplates();
+    const defaultRules: RoutingRule[] = templates.slice(0, 3).map((t) => ({
+      ...t,
+      id: t.id.replace('tmpl-', 'rule-'),
+    }));
     for (const rule of defaultRules) {
       this.rules.set(rule.id, rule);
     }

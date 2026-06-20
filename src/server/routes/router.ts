@@ -92,6 +92,17 @@ router.get('/rules', (_req: Request, res: Response) => {
   }
 });
 
+/** 获取预置路由规则模板列表 */
+router.get('/rules/templates', (_req: Request, res: Response) => {
+  try {
+    const templates = routerService.getRuleTemplates();
+    return res.json({ success: true, data: templates });
+  } catch (error) {
+    logger.error('[Router API] 获取规则模板失败', error);
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL', message: '获取失败' } });
+  }
+});
+
 /** 创建路由规则 */
 router.post('/rules', async (req: Request, res: Response) => {
   try {

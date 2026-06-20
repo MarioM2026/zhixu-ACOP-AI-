@@ -80,6 +80,25 @@ interface RuleStats {
   rules: RuleStat[];
 }
 
+interface RouterStats {
+  totalDecisions: number;
+  activeModels: number;
+  topModel: string;
+  topStrategy: string;
+  taskTypeDistribution: Record<string, number>;
+  strategyUsage: Record<string, number>;
+  modelUsage: Record<string, number>;
+}
+
+// 任务类型中文映射
+const TASK_TYPE_LABELS: Record<string, string> = {
+  bug_fix: 'Bug 修复', debugging: '调试诊断', code_review: '代码审查',
+  refactoring: '重构优化', code_completion: '代码补全', code_generation: '代码生成',
+  explanation: '代码解释', documentation: '文档生成', testing: '测试生成',
+  optimization: '性能优化', security_review: '安全审查', architecture: '架构设计',
+  migration: '代码迁移', general: '通用对话',
+};
+
 // ========== 告警 Banner ==========
 interface BannerAlert {
   id: string;
@@ -368,6 +387,15 @@ function Dashboard() {
     totalTriggers: 0,
     rules: [],
   });
+  const [routerStats, setRouterStats] = useState<RouterStats>({
+    totalDecisions: 0,
+    activeModels: 0,
+    topModel: '-',
+    topStrategy: '-',
+    taskTypeDistribution: {},
+    strategyUsage: {},
+    modelUsage: {},
+  });
   const [promptStats, setPromptStats] = useState<PromptStats>({
     total: 0,
     byType: {
@@ -409,7 +437,7 @@ function Dashboard() {
     setLoading(true);
     try {
       const queryParams = getQueryParams();
-      const [statsRes, trendRes, errorRes, toolRes, alertTrendRes, alertStatsRes, ruleStatsRes, promptStatsRes, alertsRes] = await Promise.all([
+      const [statsRes, trendRes, errorRes, toolRes, alertTrendRes, alertStatsRes, ruleStatsRes, promptStatsRes, alertsRes, routerStatsRes] = await Promise.all([
         api.get<DashboardStats>(`/api/dashboard/stats?${queryParams}`),
         api.get<TokenTrend[]>(`/api/dashboard/token-trend?${queryParams}`),
         api.get<ErrorDistribution[]>(`/api/dashboard/error-distribution?${queryParams}`),
@@ -419,6 +447,7 @@ function Dashboard() {
         api.get<RuleStats>(`/api/dashboard/rule-stats`),
         api.get<PromptStats>(`/api/prompt-injections/stats`),
         api.get<BannerAlert[]>(`/api/alerts?limit=5&unacknowledged=true`),
+        api.get<RouterStats>(`/api/dashboard/router-stats`),
       ]);
 
       setStats(statsRes.data || {
@@ -469,6 +498,15 @@ function Dashboard() {
       if (alertsData.length > 0) {
         setBannerDismissed(false);
       }
+      setRouterStats(routerStatsRes.data || {
+        totalDecisions: 0,
+        activeModels: 0,
+        topModel: '-',
+        topStrategy: '-',
+        taskTypeDistribution: {},
+        strategyUsage: {},
+        modelUsage: {},
+      });
       setLastUpdate(new Date());
       toast.success(`数据已更新 (${new Date().toLocaleTimeString()})`);
     } catch (error) {
@@ -705,6 +743,38 @@ function Dashboard() {
         </div>
       </div>
 
+      {/* 路由决策统计卡片 */}
+      <div className="stats-grid" style={{ marginTop: '1rem' }}>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #00b4d8' }}>
+          <div className="mini-stat-icon" style={{ color: '#00b4d8' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#00b4d8' }}>{routerStats.totalDecisions}</div>
+            <div className="mini-stat-label">路由决策总数</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #0077b6' }}>
+          <div className="mini-stat-icon" style={{ color: '#0077b6' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#0077b6' }}>{routerStats.activeModels}</div>
+            <div className="mini-stat-label">活跃模型数</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #023e8a' }}>
+          <div className="mini-stat-icon" style={{ color: '#023e8a' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#023e8a', fontSize: '1rem' }}>{routerStats.topModel}</div>
+            <div className="mini-stat-label">Top 模型</div>
+          </div>
+        </div>
+        <div className="mini-stat-card" style={{ borderLeft: '3px solid #48cae4' }}>
+          <div className="mini-stat-icon" style={{ color: '#48cae4' }}>◆</div>
+          <div className="mini-stat-content">
+            <div className="mini-stat-value" style={{ color: '#48cae4', fontSize: '0.85rem' }}>{routerStats.topStrategy}</div>
+            <div className="mini-stat-label">Top 策略</div>
+          </div>
+        </div>
+      </div>
+
       {/* 图表区域 */}
       <div className="charts-grid">
         {/* Token 消耗趋势 */}
@@ -935,6 +1005,142 @@ function Dashboard() {
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </div>
+          </div>
+        </FullscreenPanel>
+
+        {/* 路由决策统计 */}
+        <FullscreenPanel
+          title="🧭 路由决策统计"
+          isFullscreen={activePanel === 'router'}
+          onToggle={() => toggleFullscreen('router')}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* 概览数字 */}
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{
+                flex: 1, minWidth: 120, padding: '1rem',
+                border: '1px solid rgba(0, 180, 216, 0.2)',
+                borderRadius: '6px', background: 'rgba(0, 180, 216, 0.05)'
+              }}>
+                <div style={{ color: '#00b4d8', fontSize: '0.75rem', marginBottom: '0.25rem' }}>路由决策总数</div>
+                <div style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 600 }}>{routerStats.totalDecisions}</div>
+              </div>
+              <div style={{
+                flex: 1, minWidth: 120, padding: '1rem',
+                border: '1px solid rgba(0, 119, 182, 0.2)',
+                borderRadius: '6px', background: 'rgba(0, 119, 182, 0.05)'
+              }}>
+                <div style={{ color: '#0077b6', fontSize: '0.75rem', marginBottom: '0.25rem' }}>活跃模型数</div>
+                <div style={{ color: '#fff', fontSize: '1.5rem', fontWeight: 600 }}>{routerStats.activeModels}</div>
+              </div>
+            </div>
+
+            {/* 任务类型分布 */}
+            <div>
+              <div style={{ color: '#8a9aaa', fontSize: '0.8rem', marginBottom: '0.75rem' }}>任务类型分布</div>
+              {Object.keys(routerStats.taskTypeDistribution).length === 0 ? (
+                <div style={{ color: '#6a8a9a', textAlign: 'center', padding: '1rem' }}>
+                  暂无路由决策历史。调用 POST /api/router/route 后数据将显示在这里。
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {Object.entries(routerStats.taskTypeDistribution)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 8)
+                    .map(([type, count]) => {
+                      const maxCount = Math.max(...Object.values(routerStats.taskTypeDistribution));
+                      const pct = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
+                      return (
+                        <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <span style={{ color: '#8a9aaa', fontSize: '0.8rem', minWidth: '90px', textAlign: 'right' }}>
+                            {TASK_TYPE_LABELS[type] || type}
+                          </span>
+                          <div style={{ flex: 1, height: 8, background: 'rgba(0, 180, 216, 0.1)', borderRadius: 4, overflow: 'hidden' }}>
+                            <div style={{ width: `${pct}%`, height: '100%', background: '#00b4d8', borderRadius: 4 }} />
+                          </div>
+                          <span style={{ color: '#00b4d8', fontSize: '0.8rem', minWidth: '40px', textAlign: 'right' }}>{count}次</span>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* 策略使用分布 */}
+            <div>
+              <div style={{ color: '#8a9aaa', fontSize: '0.8rem', marginBottom: '0.75rem' }}>策略使用分布</div>
+              {Object.keys(routerStats.strategyUsage).length === 0 ? (
+                <div style={{ color: '#6a8a9a', textAlign: 'center', padding: '1rem' }}>
+                  暂无策略使用数据
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  {Object.entries(routerStats.strategyUsage)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([strategy, count]) => {
+                      const colors: Record<string, string> = {
+                        cost_optimized: '#10b981',
+                        speed_optimized: '#3b82f6',
+                        quality_optimized: '#8b5cf6',
+                        balanced: '#f59e0b',
+                        custom: '#6b7280',
+                      };
+                      const names: Record<string, string> = {
+                        cost_optimized: '成本优先',
+                        speed_optimized: '速度优先',
+                        quality_optimized: '质量优先',
+                        balanced: '均衡策略',
+                        custom: '自定义',
+                      };
+                      return (
+                        <div key={strategy} style={{
+                          display: 'flex', alignItems: 'center', gap: '0.4rem',
+                          padding: '0.3rem 0.6rem', borderRadius: 6,
+                          border: `1px solid ${colors[strategy] || '#6b7280'}40`,
+                          background: `${colors[strategy] || '#6b7280'}10`,
+                        }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: colors[strategy] || '#6b7280' }} />
+                          <span style={{ color: colors[strategy] || '#6b7280', fontSize: '0.75rem' }}>
+                            {names[strategy] || strategy}
+                          </span>
+                          <span style={{ color: '#fff', fontSize: '0.75rem', fontWeight: 600 }}>{count}次</span>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* 模型使用分布 */}
+            <div>
+              <div style={{ color: '#8a9aaa', fontSize: '0.8rem', marginBottom: '0.75rem' }}>模型使用分布</div>
+              {Object.keys(routerStats.modelUsage).length === 0 ? (
+                <div style={{ color: '#6a8a9a', textAlign: 'center', padding: '1rem' }}>
+                  暂无模型使用数据
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {Object.entries(routerStats.modelUsage)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 6)
+                    .map(([modelId, count]) => {
+                      const maxCount = Math.max(...Object.values(routerStats.modelUsage));
+                      const pct = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
+                      return (
+                        <div key={modelId} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <span style={{ color: '#8a9aaa', fontSize: '0.8rem', minWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {modelId}
+                          </span>
+                          <div style={{ flex: 1, height: 8, background: 'rgba(72, 202, 228, 0.1)', borderRadius: 4, overflow: 'hidden' }}>
+                            <div style={{ width: `${pct}%`, height: '100%', background: '#48cae4', borderRadius: 4 }} />
+                          </div>
+                          <span style={{ color: '#48cae4', fontSize: '0.8rem', minWidth: '40px', textAlign: 'right' }}>{count}次</span>
+                        </div>
+                      );
+                    })}
                 </div>
               )}
             </div>
