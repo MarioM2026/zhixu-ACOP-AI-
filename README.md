@@ -66,10 +66,24 @@ IF  TTFT > 2s                             →   THEN  注入并发调用提示
 
 ### ⚡ 快速开始
 
+#### 🚀 方式一：一键启动（推荐）
+
+直接双击 `启动.bat` 文件，自动完成：
+- 环境检测（Node.js ≥ 18）
+- 依赖安装（首次运行）
+- 前后端服务启动
+- 弹出浏览器选择框
+
+```
+克隆项目 → 双击 启动.bat → 选择浏览器 → 自动打开管理看板
+```
+
+#### 🖥️ 方式二：命令行启动
+
 ```bash
 # 克隆项目
 git clone https://github.com/MarioM2026/zhixu-ACOP-AICodeCopilot.git
-cd zhixu-ACOP-AI
+cd zhixu-ACOP-AICodeCopilot
 
 # 安装依赖（Node.js ≥ 18）
 npm install
@@ -77,15 +91,19 @@ npm install
 # 启动后端（默认 http://localhost:3001）
 npm run dev:server
 
-# 启动前端（Vite，默认 http://localhost:3000）
+# 启动前端（Vite，默认 http://localhost:5173）
 npm run dev:client
 ```
 
-打开浏览器：
+#### 📍 访问地址
 
-- 前端看板 → <http://localhost:3000>
-- 事件 API → <http://localhost:3001/api/events>
-- 上下文 API → <http://localhost:3001/api/context/sessions>
+| 服务 | 地址 |
+|------|------|
+| 前端看板 | <http://localhost:5173> |
+| 管理看板 | <http://localhost:5173/dashboard> |
+| 后端 API | <http://localhost:3001> |
+| 事件 API | <http://localhost:3001/api/events> |
+| 上下文 API | <http://localhost:3001/api/context/sessions> |
 
 **连接你的 AI 编程助手：**
 
@@ -196,10 +214,24 @@ Route every call to the best model based on task type, token budget, and current
 
 ### ⚡ Quick Start
 
+#### 🚀 Method 1: One-Click Launch (Recommended)
+
+Simply double-click `启动.bat` file, which automatically:
+- Detects Node.js environment (≥ 18 required)
+- Installs dependencies (first run only)
+- Starts backend and frontend services
+- Shows browser selection dialog
+
+```
+Clone → Double-click 启动.bat → Select browser → Dashboard opens automatically
+```
+
+#### 🖥️ Method 2: Command Line
+
 ```bash
 # Clone
 git clone https://github.com/MarioM2026/zhixu-ACOP-AICodeCopilot.git
-cd zhixu-ACOP-AI
+cd zhixu-ACOP-AICodeCopilot
 
 # Install (Node.js >= 18 required)
 npm install
@@ -207,15 +239,19 @@ npm install
 # Backend (default: http://localhost:3001)
 npm run dev:server
 
-# Frontend (Vite, default: http://localhost:3000)
+# Frontend (Vite, default: http://localhost:5173)
 npm run dev:client
 ```
 
-Then open:
+#### 📍 Access URLs
 
-- Dashboard → <http://localhost:3000>
-- Events API → <http://localhost:3001/api/events>
-- Context API → <http://localhost:3001/api/context/sessions>
+| Service | URL |
+|---------|-----|
+| Frontend | <http://localhost:5173> |
+| Dashboard | <http://localhost:5173/dashboard> |
+| Backend API | <http://localhost:3001> |
+| Events API | <http://localhost:3001/api/events> |
+| Context API | <http://localhost:3001/api/context/sessions> |
 
 **Connecting Your AI Copilots:**
 

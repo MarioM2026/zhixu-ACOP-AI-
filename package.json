@@ -16,13 +16,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts,.tsx",
-    "lint:fix": "eslint src --ext .ts,.tsx --fix",
-    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
-    "db:init": "tsx scripts/init-db.ts init",
-    "db:reset": "tsx scripts/init-db.ts reset",
-    "db:status": "tsx scripts/init-db.ts status",
-    "setup:trae": "tsx scripts/setup-trae-mcp.ts",
-    "deploy": "tsx scripts/init-db.ts init"
+    "lint:fix": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write \"src/**/*.{ts,tsx\""
   },
   "dependencies": {
     "cors": "^2.8.5",

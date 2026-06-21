@@ -2,7 +2,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from './logger';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+// 支持通过环境变量设置数据目录（Electron 环境下使用）
+// 优先级: ZHIXU_DATA_DIR > process.cwd()/data
+const DATA_DIR =
+  process.env.ZHIXU_DATA_DIR && process.env.ZHIXU_DATA_DIR.trim()
+    ? process.env.ZHIXU_DATA_DIR.trim()
+    : path.join(process.cwd(), 'data');
 
 const pendingWrites: Map<string, NodeJS.Timeout> = new Map();
 const DEBOUNCE_MS = 2000;

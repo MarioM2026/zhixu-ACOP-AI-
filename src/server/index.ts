@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 import { aiCodeEventRoutes } from './routes/aiCodeEvent';
 import { dashboardRoutes } from './routes/dashboard';
 import { ruleRoutes } from './routes/rules';
@@ -11,7 +14,6 @@ import { promptInjectionRoutes } from './routes/promptInjection';
 import { adapterRoutes } from './routes/adapters';
 import routerRoutes from './routes/router';
 import contextRoutes from './routes/context';
-import installerRoutes from './routes/installer';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './services/logger';
 import { startScheduler, getSchedulerStatus, triggerManualScan } from './services/scheduler';
@@ -30,11 +32,43 @@ import { initDatabase, closeDatabase, saveDatabase } from './services/databaseSe
 
 config();
 
+// ESM 兼容：获取当前目录
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// 前端静态文件目录（相对项目根目录）
+// 开发模式: <project>/dist/client
+// 打包模式: resources/app/dist/client
+function getStaticDir(): string {
+  // 先尝试从项目根目录找 dist/client
+  const projectRoot = path.resolve(__dirname, '..', '..', '..');
+  const devPath = path.join(projectRoot, 'dist', 'client');
+  if (fs.existsSync(path.join(devPath, 'index.html'))) {
+    return devPath;
+  }
+  // 回退：从当前文件向上两级找 dist/client
+  const altPath = path.resolve(__dirname, '..', '..', 'dist', 'client');
+  if (fs.existsSync(path.join(altPath, 'index.html'))) {
+    return altPath;
+  }
+  // 再回退：项目根目录下的 dist/client
+  const cwdPath = path.join(process.cwd(), 'dist', 'client');
+  if (fs.existsSync(path.join(cwdPath, 'index.html'))) {
+    return cwdPath;
+  }
+  // 最终回退：返回 cwd 下的路径（即使不存在，express 会 404，不影响 API）
+  return cwdPath;
+}
+
+const STATIC_DIR = getStaticDir();
+
 // Middleware
-app.use(helmet());
+// 注意：helmet 对静态文件会添加安全头，但会阻止内联脚本运行
+// 对 API 路由使用严格安全策略，对静态文件使用较宽松策略
+app.use('/api', helmet());
 app.use(cors());
 app.use(express.json());
 
@@ -57,7 +91,6 @@ app.use('/api/prompt-injections', promptInjectionRoutes);
 app.use('/api/adapters', adapterRoutes);
 app.use('/api/router', routerRoutes);
 app.use('/api/context', contextRoutes);
-app.use('/api/installer', installerRoutes);
 
 // Scheduler API
 app.get('/api/scheduler/status', (_req, res) => {
@@ -72,6 +105,43 @@ app.post('/api/scheduler/scan', async (_req, res) => {
     res.status(500).json({ success: false, error: String(error) });
   }
 });
+
+// 应用信息接口（告诉前端运行环境）
+app.get('/api/app-info', (_req, res) => {
+  res.json({
+    success: true,
+    data: {
+      version: '1.0.0',
+      isElectron: !!process.env.ZHIXU_DATA_DIR, // 通过环境变量判断是否在 Electron 中
+      dataDir: process.env.ZHIXU_DATA_DIR || path.join(process.cwd(), 'data'),
+      port: PORT,
+      staticDir: STATIC_DIR,
+    },
+  });
+});
+
+// 前端静态文件服务（在 Electron 打包模式下提供界面）
+// 注意: 仅当 dist/client 存在时才启用，否则不影响纯 API 模式
+if (fs.existsSync(STATIC_DIR)) {
+  logger.info(`[Server] 启用前端静态文件服务: ${STATIC_DIR}`);
+  app.use(express.static(STATIC_DIR, {
+    maxAge: '1h',
+    extensions: ['html', 'js', 'css'],
+  }));
+
+  // SPA 回退: 非 API 请求且无匹配文件时返回 index.html
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    const indexPath = path.join(STATIC_DIR, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      next();
+    }
+  });
+} else {
+  logger.info(`[Server] 未找到前端静态文件目录 (${STATIC_DIR})，仅提供 API 服务`);
+}
 
 // Error handler
 app.use(errorHandler);
